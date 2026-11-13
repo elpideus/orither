@@ -59,6 +59,7 @@ jobs:
         with:
           package_json_file: desktop/package.json
           cache: true
+          cache_dependency_path: desktop/pnpm-lock.yaml
 
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
@@ -131,6 +132,7 @@ jobs:
         with:
           package_json_file: desktop/package.json
           cache: true
+          cache_dependency_path: desktop/pnpm-lock.yaml
 
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
