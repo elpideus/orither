@@ -199,8 +199,20 @@ function Ambient() {
   const told = useRef<string | null>(null);
   const version = status?.release?.version ?? null;
   const phase = status?.phase;
+  const error = status?.error ?? null;
   useEffect(() => {
-    if (phase === "ready" && version && told.current !== version) {
+    if (phase === "ready" && version && error) {
+      // Installing did not work, and the update is still there to try again.
+      announce({
+        id: ID,
+        icon: TriangleAlert,
+        title: `Orither ${version} could not be installed`,
+        detail: error,
+        action: { label: "Try again", run: () => void updates.install() },
+        tone: "problem",
+      });
+    } else if (phase === "ready" && version) {
+      if (told.current === version) return;
       told.current = version;
       announce({
         id: ID,
@@ -211,10 +223,10 @@ function Ambient() {
       });
     } else if (phase === "installing") {
       announce({ id: ID, icon: RotateCcw, title: `Installing Orither ${version}`, detail: "Orither opens again in a moment." });
-    } else if (phase !== "ready") {
+    } else {
       dismiss(ID);
     }
-  }, [phase, version]);
+  }, [phase, version, error]);
   return null;
 }
 
