@@ -1,0 +1,395 @@
+# Publishes a release when a v* tag is pushed (`node scripts/release.mjs <version>` pushes one): the
+# checks from ci.yml, then the Windows installer, the Linux AppImage, .deb and .rpm, and the Android
+# app, each built on its own runner, signed by a job of its own, and published as a GitHub release
+# with latest.json, which installed copies read to update themselves, and SHA256SUMS. A tag with a
+# "-" (v0.3.0-beta.1) is published as a pre-release, which installed copies do not update to.
+#
+# Run by hand (Actions, Release, Run workflow), it builds everything from the chosen ref and keeps
+# it as workflow artifacts, unsigned, publishing nothing: builds to try. The signing keys are for
+# releases only.
+#
+# Every action is pinned to a commit, with its tag in a comment: a tag can be moved to other code,
+# a commit cannot.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per ref at a time, and never cancelled halfway through publishing.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # A tag is published only once CI's checks pass on it. A build by hand skips them: it publishes
+  # nothing, and whoever starts it wants the files soon.
+  checks:
+    name: Checks
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/ci.yml
+
+  # The builds never see the signing keys. They run the build scripts of every dependency, and code
+  # run in a job can leave things behind for its later steps, so the keys are used on another
+  # runner, in the sign job.
+  windows:
+    name: Build for Windows
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          package_json_file: desktop/package.json
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: release
+          # A cache saved on a tag serves only that tag. A test build on main saves one the next
+          # tag starts from.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: The tag matches the version in the repository
+        if: startsWith(github.ref, 'refs/tags/')
+        run: node scripts/version.mjs --check "$GITHUB_REF_NAME"
+
+      - name: Version
+        id: version
+        run: echo "version=$(node scripts/version.mjs)" >> "$GITHUB_OUTPUT"
+
+      - name: Install
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: desktop
+        run: pnpm tauri build --bundles nsis
+
+      # A name without the version, so the README's download links always reach the newest one.
+      - name: Collect the installer
+        run: |
+          mkdir -p out
+          cp target/release/bundle/nsis/Orither_*_x64-setup.exe out/Orither-Setup-x64.exe
+          sha256sum out/* | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: orither-${{ steps.version.outputs.version }}-windows-unsigned
+          path: out/
+          if-no-files-found: error
+          # Running the jobs again replaces the artifact instead of failing on it.
+          overwrite: true
+
+  # Built on the oldest system with WebKitGTK 4.1 the release is meant for, Ubuntu 22.04, so the
+  # binaries ask for no newer glibc than it has.
+  linux:
+    name: Build for Linux
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # What Tauri builds against, D-Bus for BlueZ, and what the AppImage carries: GStreamer's
+      # plugins, for sound and video in WhatsApp Web.
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config file patchelf xdg-utils libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libsoup-3.0-dev librsvg2-dev libdbus-1-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-pulseaudio
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          package_json_file: desktop/package.json
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: The tag matches the version in the repository
+        if: startsWith(github.ref, 'refs/tags/')
+        run: node scripts/version.mjs --check "$GITHUB_REF_NAME"
+
+      - name: Version
+        id: version
+        run: echo "version=$(node scripts/version.mjs)" >> "$GITHUB_OUTPUT"
+
+      - name: Install
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: desktop
+        run: pnpm tauri build --bundles deb,rpm,appimage
+
+      # Names without the version, so the README's download links always reach the newest ones. An
+      # AppImage also replaces itself when it updates, so a version in its name would soon be wrong.
+      - name: Collect the packages
+        run: |
+          mkdir -p out
+          bundle=target/release/bundle
+          cp "$bundle"/appimage/*.AppImage out/Orither-x86_64.AppImage
+          cp "$bundle"/deb/*.deb out/orither_amd64.deb
+          cp "$bundle"/rpm/*.rpm out/orither.x86_64.rpm
+          sha256sum out/* | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: orither-${{ steps.version.outputs.version }}-linux-unsigned
+          path: out/
+          if-no-files-found: error
+          overwrite: true
+
+  android:
+    name: Build for Android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: true
+
+      - name: Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;30.0.16248370" "platforms;android-37.2" "build-tools;36.0.0" > /dev/null
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: android
+          save-if: false
+
+      - name: cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: The tag matches the version in the repository
+        if: startsWith(github.ref, 'refs/tags/')
+        run: node scripts/version.mjs --check "$GITHUB_REF_NAME"
+
+      - name: Version
+        id: version
+        run: echo "version=$(node scripts/version.mjs)" >> "$GITHUB_OUTPUT"
+
+      # Signed with the runner's throwaway debug key here, and with Orither's key in the sign job.
+      - name: Build
+        working-directory: android
+        run: ./gradlew --no-daemon :app:assembleRelease
+
+      - name: Collect the app
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/app-release.apk out/Orither-android-arm64.apk
+          sha256sum out/* | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: orither-${{ steps.version.outputs.version }}-android-unsigned
+          path: out/
+          if-no-files-found: error
+          overwrite: true
+
+  # Signs the builds as they were made, on a fresh runner: nothing checked out, nothing installed
+  # or restored from a cache, no token permissions. The updater signatures come from the tauri CLI
+  # at the exact version in desktop/pnpm-lock.yaml, run from an empty directory; the Android app is
+  # signed with apksigner from the runner's Android SDK. This keeps the keys out of reach of code
+  # from the builds.
+  #
+  # The keys are secrets of the release environment, which only v* tags may use (docs/releasing.md).
+  sign:
+    name: Sign
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Only what was built from a commit that passed the checks gets signed.
+    needs: [checks, windows, linux, android]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions: {}
+    environment: release
+    env:
+      VERSION: ${{ needs.linux.outputs.version }}
+      TAURI_CLI_VERSION: 2.12.4
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: orither-${{ needs.linux.outputs.version }}-*-unsigned
+          merge-multiple: true
+          path: release
+
+      - name: Sign the updates
+        # The signer waits for a password on the console when it has none.
+        timeout-minutes: 5
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # No install script of any package runs while the key is in the environment.
+          npm_config_ignore_scripts: 'true'
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::The release environment has no TAURI_SIGNING_PRIVATE_KEY secret."
+            exit 1
+          fi
+          dir="$GITHUB_WORKSPACE/release"
+          # An empty directory, so no package.json or .npmrc around it has a say in what npx runs.
+          cd "$(mktemp -d)"
+          for file in Orither-Setup-x64.exe Orither-x86_64.AppImage orither_amd64.deb orither.x86_64.rpm; do
+            npx --yes "@tauri-apps/cli@$TAURI_CLI_VERSION" signer sign --app-version "$VERSION" "$dir/$file" < /dev/null
+          done
+
+      - name: Sign the Android app
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::The release environment has no ANDROID_KEYSTORE_BASE64 secret."
+            exit 1
+          fi
+          keystore="$RUNNER_TEMP/orither.jks"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n 1)
+          # Replaces the debug signature the build made.
+          "$apksigner" sign --ks "$keystore" --ks-key-alias orither \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:ANDROID_KEYSTORE_PASSWORD \
+            release/Orither-android-arm64.apk
+          rm -f "$keystore" release/*.idsig
+          "$apksigner" verify --print-certs release/Orither-android-arm64.apk | grep -i "SHA-256 digest"
+
+      - name: Check the signatures
+        run: |
+          for file in Orither-Setup-x64.exe Orither-x86_64.AppImage orither_amd64.deb orither.x86_64.rpm; do
+            if [ ! -s "release/$file.sig" ]; then
+              echo "::error::$file.sig is missing or empty: $file is not signed."
+              exit 1
+            fi
+          done
+          ls -l release
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: orither-${{ needs.linux.outputs.version }}-signed
+          path: release/
+          if-no-files-found: error
+          overwrite: true
+
+  publish:
+    name: Publish the release
+    if: github.event_name == 'push'
+    needs: [checks, windows, linux, android, sign]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.linux.outputs.version }}
+    steps:
+      # The whole history and every tag: the notes list the commits since the previous release.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: orither-${{ needs.linux.outputs.version }}-signed
+          path: assets
+
+      # Installed apps read releases without signing in: from a private repository they get 404.
+      - name: The repository is public
+        run: |
+          visibility=$(gh repo view "$GH_REPO" --json visibility --jq .visibility)
+          if [ "$visibility" != PUBLIC ]; then
+            echo "::error::$GH_REPO is $visibility: installed apps could not read this release."
+            exit 1
+          fi
+
+      - name: Release notes and the update manifest
+        run: |
+          node scripts/release-notes.mjs "$TAG" > release-notes.md
+          node scripts/release-notes.mjs "$TAG" --changes > changes.md
+          node scripts/updater-manifest.mjs "$VERSION" assets changes.md > assets/latest.json
+          cat assets/latest.json
+
+      - name: Checksums
+        run: |
+          cd assets
+          sha256sum Orither-Setup-x64.exe Orither-x86_64.AppImage orither_amd64.deb orither.x86_64.rpm \
+            Orither-android-arm64.apk > SHA256SUMS
+          tee -a "$GITHUB_STEP_SUMMARY" < SHA256SUMS
+
+      - name: Publish
+        run: |
+          files=(assets/*)
+          # A pre-release is never marked as the latest release, so installed apps never see it.
+          if [[ "$TAG" == *-* ]]; then
+            flags=(--prerelease --latest=false)
+          else
+            flags=(--prerelease=false --latest)
+          fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # A re-run: replace the files and the notes instead of failing.
+            gh release upload "$TAG" "${files[@]}" --clobber
+            gh release edit "$TAG" --title "Orither $VERSION" --notes-file release-notes.md "${flags[@]}"
+          else
+            gh release create "$TAG" "${files[@]}" --verify-tag --title "Orither $VERSION" \
+              --notes-file release-notes.md "${flags[@]}"
+          fi

@@ -1,0 +1,168 @@
+# Checks every push to main and every pull request: that the versions agree, that the desktop app
+# typechecks, passes its tests and builds on Linux and on Windows, and that the Android app builds.
+# The release workflow runs the same checks on a tag before it publishes it (workflow_call). Every
+# action is pinned to a commit, with its tag in a comment: a tag can be moved to other code, a
+# commit cannot.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# A newer push to a pull request replaces its run in progress. Runs on main and on release tags
+# always finish. The event is part of the group because a call from the release workflow has the
+# release's event and ref.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # What Tauri builds against on Linux, and D-Bus for BlueZ.
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libdbus-1-dev
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      # The pnpm version is packageManager in desktop/package.json.
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          package_json_file: desktop/package.json
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          components: clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Pull requests reuse main's cache instead of each filling the repository's quota.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Versions agree
+        run: node scripts/version.mjs --check
+
+      - name: Release script tests
+        run: node --test scripts/
+
+      - name: Install
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile
+
+      # Typechecks the UI and builds it: the Tauri crate embeds it when it compiles.
+      - name: Build the UI
+        working-directory: desktop
+        run: pnpm build
+
+      - name: UI tests
+        working-directory: desktop
+        run: pnpm test
+
+      - name: Clippy
+        run: cargo clippy -p orither-link -p orither-viewer -p orither-desktop --all-targets --locked
+
+      - name: Rust tests
+        run: cargo test -p orither-link -p orither-viewer -p orither-desktop --locked
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Node before pnpm: on an older Node, pnpm/action-setup installs pnpm without pnpm.cmd.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          package_json_file: desktop/package.json
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          components: clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the UI
+        working-directory: desktop
+        run: pnpm build
+
+      - name: Clippy
+        run: cargo clippy -p orither-link -p orither-viewer -p orither-desktop --all-targets --locked
+
+      - name: Rust tests
+        run: cargo test -p orither-link -p orither-viewer -p orither-desktop --locked
+
+  android:
+    name: Android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      # The runner has the Android SDK; the NDK and the platform this app compiles against are added.
+      - name: Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;30.0.16248370" "platforms;android-37.2" "build-tools;36.0.0" > /dev/null
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: android
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build
+        working-directory: android
+        run: ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest
