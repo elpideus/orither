@@ -1,0 +1,105 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Orither",
+  "mainBinaryName": "orither",
+  "version": "0.1.0",
+  "identifier": "dev.orither.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Orither",
+        "width": 1240,
+        "height": 820,
+        "minWidth": 920,
+        "minHeight": 640,
+        "visible": false,
+        "backgroundColor": "#171717"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: blob: orither: http://orither.localhost; media-src 'self' blob: orither: http://orither.localhost; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "deb",
+      "rpm",
+      "appimage",
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../LICENSE": "LICENSE",
+      "../../NOTICE": "NOTICE"
+    },
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      },
+      "deb": {
+        "depends": [
+          "gstreamer1.0-plugins-base",
+          "gstreamer1.0-plugins-good"
+        ],
+        "recommends": [
+          "adb",
+          "pulseaudio-utils",
+          "bluez"
+        ],
+        "section": "utils"
+      },
+      "rpm": {
+        "depends": [
+          "gstreamer1-plugins-base",
+          "gstreamer1-plugins-good"
+        ],
+        "recommends": [
+          "android-tools",
+          "pulseaudio-utils",
+          "bluez"
+        ]
+      }
+    },
+    "category": "Utility",
+    "shortDescription": "Your phone, on your computer.",
+    "publisher": "The Orither contributors",
+    "copyright": "Copyright 2026 The Orither contributors",
+    "homepage": "https://github.com/elpideus/orither",
+    "license": "Apache-2.0",
+    "licenseFile": "../../LICENSE",
+    "longDescription": "Link an Android phone once, and its messages, photos, files, apps, screen, microphone, speaker and camera are a click away, at home or across the world.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "startMenuFolder": "Orither"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQxNUZEN0ExMTQ3N0JGMzYKUldRMnYzY1VvZGRmMGV0SzV0ZkxaNUJBSjlMQlVTZnQ2dUJUL1hPQkdOOWxHQWlVbE5tMGRYNHAK",
+      "endpoints": [
+        "https://github.com/elpideus/orither/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

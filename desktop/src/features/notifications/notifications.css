@@ -1,0 +1,77 @@
+.notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  padding: 0 6px 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.note {
+  position: relative;
+}
+
+.note .row time {
+  transition: opacity var(--fast) ease;
+}
+
+.note:focus-within .row time {
+  opacity: 0;
+}
+
+.note-picture {
+  width: 40px;
+  height: 40px;
+  border-radius: 24%;
+  object-fit: cover;
+  background: var(--inset);
+}
+
+.note-picture[data-person="true"] {
+  border-radius: 50%;
+}
+
+.note .row p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.note .row p .phone-mark {
+  flex: none;
+}
+
+.note-app {
+  flex: none;
+  color: var(--text);
+  opacity: 0.8;
+}
+
+.note-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-dismiss {
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  opacity: 0;
+  transition: opacity var(--fast) ease;
+}
+
+.note:focus-within .note-dismiss {
+  opacity: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .note:hover .note-dismiss {
+    opacity: 1;
+  }
+  .note:hover .row time {
+    opacity: 0;
+  }
+}

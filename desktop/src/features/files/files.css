@@ -1,0 +1,95 @@
+.files-page {
+  height: 100%;
+}
+
+.files-head {
+  padding-left: 10px;
+}
+
+.files-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.files-crumbs span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.files-crumbs button {
+  padding: 3px 8px;
+  border-radius: 8px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .files-crumbs button:hover {
+    background: var(--hover);
+  }
+}
+
+.files-list {
+  flex: 1;
+  min-height: 0;
+  padding: 0 10px 10px;
+  overflow-y: auto;
+}
+
+.files-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 90px 70px 124px;
+  gap: 12px;
+  align-items: center;
+  height: 44px;
+  padding: 0 10px;
+  border-radius: var(--r-row);
+  transition: background-color var(--fast) ease;
+}
+
+.files-row:focus-within {
+  background: var(--hover);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .files-row:hover {
+    background: var(--hover);
+  }
+  .files-row:hover .files-actions {
+    opacity: 1;
+  }
+}
+
+.files-row svg[data-folder="true"] {
+  color: var(--accent-ink);
+}
+
+.files-row svg {
+  color: var(--text-dim);
+}
+
+.files-row strong {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-row .dim {
+  font-size: 13px;
+  text-align: right;
+}
+
+.files-actions {
+  display: flex;
+  justify-content: flex-end;
+  opacity: 0;
+  transition: opacity var(--fast) ease;
+}
+
+.files-row:focus-within .files-actions {
+  opacity: 1;
+}

@@ -1,0 +1,662 @@
+/* Orither's tokens. The seven colours at the top come from the desktop (see
+   core/theme.ts); everything else is derived from them, so a light or dark
+   desktop, and any accent, give a consistent window. */
+:root {
+  --bg: #171717;
+  --surface: #1c1c1c;
+  --surface-2: #252525;
+  --text: #ebebeb;
+  --text-dim: #a0a0a0;
+  --accent: #3ddc84;
+  --accent-contrast: #05230f;
+
+  --line: color-mix(in oklab, var(--text) 9%, transparent);
+  --line-strong: color-mix(in oklab, var(--text) 16%, transparent);
+  --hover: color-mix(in oklab, var(--text) 6%, transparent);
+  --press: color-mix(in oklab, var(--text) 10%, transparent);
+  --raised: color-mix(in oklab, var(--surface-2) 100%, var(--text) 3%);
+  /* A fill that stands out inside a pane, which the desktop's button colour does not always do. */
+  --inset: var(--surface-2);
+  --accent-soft: color-mix(in oklab, var(--accent) 15%, transparent);
+  --accent-ink: color-mix(in oklab, var(--accent) 82%, var(--text));
+  --danger: #e5484d;
+  --danger-soft: color-mix(in oklab, var(--danger) 16%, transparent);
+  --positive: #4cc38a;
+  --shadow-float: 0 1px 0 color-mix(in oklab, var(--text) 6%, transparent) inset, 0 16px 40px rgb(0 0 0 / 0.36), 0 2px 8px rgb(0 0 0 / 0.24);
+
+  --r-row: 10px;
+  --r-card: 14px;
+  --r-pane: 18px;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --fast: 150ms;
+
+  color-scheme: dark;
+  font: 400 14px/1.45 system-ui, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+  accent-color: var(--accent);
+  caret-color: var(--accent);
+}
+
+:root[data-scheme="light"] {
+  --inset: color-mix(in oklab, var(--text) 6%, var(--surface));
+  --raised: var(--surface);
+  --line: color-mix(in oklab, var(--text) 11%, transparent);
+  --hover: color-mix(in oklab, var(--text) 5%, transparent);
+  --press: color-mix(in oklab, var(--text) 9%, transparent);
+  --accent-ink: color-mix(in oklab, var(--accent) 70%, var(--text));
+  --danger: #d13438;
+  --positive: #16a34a;
+  --shadow-float: 0 0 0 1px color-mix(in oklab, var(--text) 8%, transparent), 0 16px 40px rgb(0 0 0 / 0.14), 0 2px 6px rgb(0 0 0 / 0.08);
+}
+
+/* Colours swap at once when the desktop's theme changes. */
+:root[data-switching] *,
+:root[data-switching] *::before,
+:root[data-switching] *::after {
+  transition: none !important;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: default;
+}
+
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+  user-select: text;
+}
+
+h1,
+h2,
+h3,
+p,
+ol,
+ul {
+  margin: 0;
+}
+
+ol,
+ul {
+  padding: 0;
+  list-style: none;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--accent) 38%, transparent);
+  color: var(--text);
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--text) 70%, transparent);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 4px solid transparent;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--text) 18%, transparent) padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--text) 30%, transparent);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.lucide {
+  stroke-width: 1.75;
+  flex: none;
+}
+
+.selectable {
+  user-select: text;
+}
+
+.dim {
+  color: var(--text-dim);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Buttons */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--r-row);
+  background: var(--press);
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background-color var(--fast) ease,
+    color var(--fast) ease,
+    transform var(--fast) var(--ease-out);
+}
+
+.button > .lucide:first-child {
+  margin-left: -3px;
+}
+
+.button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.button[data-kind="primary"] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.button[data-kind="danger"] {
+  background: var(--danger);
+  color: #fff;
+}
+
+.button[data-kind="quiet"] {
+  background: transparent;
+}
+
+.button[data-size="large"] {
+  height: 40px;
+  padding: 0 18px;
+  font-size: 15px;
+}
+
+.button:disabled {
+  opacity: 0.45;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .button:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--text) 14%, transparent);
+  }
+  .button[data-kind="primary"]:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--accent) 88%, var(--text));
+  }
+  .button[data-kind="danger"]:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--danger) 88%, #fff);
+  }
+  .button[data-kind="quiet"]:hover:not(:disabled) {
+    background: var(--hover);
+  }
+}
+
+.icon-button {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-row);
+  color: var(--text-dim);
+  transition:
+    background-color var(--fast) ease,
+    color var(--fast) ease,
+    transform var(--fast) var(--ease-out);
+}
+
+.icon-button:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.icon-button[data-active="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .icon-button:hover:not(:disabled) {
+    background: var(--hover);
+    color: var(--text);
+  }
+}
+
+/* Switches */
+
+.toggle {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 24px;
+  border-radius: 12px;
+  background: var(--line-strong);
+  transition: background-color 200ms var(--ease-out);
+}
+
+.toggle::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  transition:
+    transform 200ms var(--ease-out),
+    background-color 200ms var(--ease-out);
+}
+
+.toggle[aria-checked="true"] {
+  background: var(--accent);
+}
+
+.toggle[aria-checked="true"]::after {
+  transform: translateX(16px);
+  background: var(--accent-contrast);
+}
+
+.toggle:disabled {
+  opacity: 0.45;
+}
+
+/* Fields */
+
+.field {
+  height: 34px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--r-row);
+  outline: none;
+  background: var(--press);
+  transition:
+    border-color var(--fast) ease,
+    background-color var(--fast) ease;
+}
+
+.field:focus {
+  border-color: color-mix(in oklab, var(--accent) 70%, transparent);
+  background: var(--surface);
+}
+
+.field::placeholder {
+  color: var(--text-dim);
+}
+
+.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search > .lucide {
+  position: absolute;
+  left: 10px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.search .field {
+  width: 100%;
+  padding-left: 34px;
+}
+
+/* Panes: the surfaces work happens on */
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-radius: var(--r-pane);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.pane-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 10px 12px 6px 18px;
+}
+
+.pane-head h2 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.pane-head .count {
+  color: var(--text-dim);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* Rows in a list */
+
+.row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 1px 12px;
+  align-items: center;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 10px;
+  border-radius: var(--r-row);
+  text-align: left;
+  transition: background-color var(--fast) ease;
+}
+
+.row > :first-child {
+  grid-row: span 2;
+}
+
+.row strong {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row time,
+.row .meta {
+  justify-self: end;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.row p {
+  grid-column: 2 / -1;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row[data-selected="true"] {
+  background: var(--accent-soft);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button.row:hover,
+  .row[role="button"]:hover {
+    background: var(--hover);
+  }
+  .row[data-selected="true"]:hover {
+    background: var(--accent-soft);
+  }
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--inset);
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.app-icon {
+  display: block;
+  border-radius: 24%;
+  object-fit: cover;
+}
+
+/* Empty and waiting states */
+
+.empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 0;
+  padding: 32px;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.empty > .lucide {
+  margin-bottom: 4px;
+  color: color-mix(in oklab, var(--text-dim) 80%, transparent);
+}
+
+.empty h3 {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+.empty p {
+  max-width: 42ch;
+  text-wrap: pretty;
+}
+
+.empty .button {
+  margin-top: 8px;
+}
+
+.waiting {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--text-dim);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    rotate: 1turn;
+  }
+}
+
+/* Split pages: a list on the left and what it opens on the right */
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+
+.split-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Conversations */
+
+.conversation {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  padding: 12px 22px 22px;
+  overflow-y: auto;
+}
+
+.bubble-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.bubble-row[data-mine="true"] {
+  align-items: flex-end;
+}
+
+.bubble {
+  max-width: min(72%, 560px);
+  padding: 8px 12px;
+  border-radius: 16px;
+  background: var(--inset);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.bubble[data-mine="true"] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.bubble-code {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 6px 6px 6px 12px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.bubble-code strong {
+  flex: 1;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+}
+
+.bubble-code .button {
+  height: 30px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.bubble-time {
+  align-self: center;
+  margin: 14px 0 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/* Settings-style rows: a label, its explanation, and its control */
+
+.option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 2px 14px;
+  align-items: center;
+  padding: 12px 14px;
+  border-radius: var(--r-card);
+}
+
+.option > .lucide {
+  grid-row: span 2;
+  color: var(--text-dim);
+}
+
+.option strong {
+  font-weight: 500;
+}
+
+.option p {
+  grid-column: 2;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-wrap: pretty;
+}
+
+.option > :last-child:not(p):not(strong) {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+}
+
+/* Tooltip-like labels drawn by the app */
+
+.tip {
+  position: absolute;
+  z-index: 30;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: var(--raised);
+  box-shadow: var(--shadow-float);
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+  }
+  .waiting {
+    animation-duration: 1.6s;
+  }
+}
+
+.messages-search {
+  padding: 10px 10px 4px;
+}
+
+.messages-search .search {
+  flex: 1;
+}
+
+.row p[data-unread="true"] {
+  color: var(--text);
+  font-weight: 500;
+}

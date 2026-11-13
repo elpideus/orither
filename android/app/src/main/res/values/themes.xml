@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Light by default; values-night holds the dark window, so nothing flashes before Compose draws. -->
+    <style name="Theme.Orither" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <!-- Over the app being sent, which stays as it is behind. -->
+    <style name="Theme.Orither.Picker">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
+</resources>

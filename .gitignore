@@ -1,0 +1,15 @@
+target/
+node_modules/
+dist/
+build/
+.gradle/
+.kotlin/
+local.properties
+*.apk
+*.so
+.DS_Store
+.idea/
+# Local tools' working folders
+.claude/
+.impeccable/
+desktop/src-tauri/gen/

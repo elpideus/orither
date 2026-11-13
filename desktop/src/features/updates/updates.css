@@ -1,0 +1,99 @@
+.update-status[data-phase="ready"] > .lucide,
+.update-status[data-phase="current"] > .lucide {
+  color: var(--accent-ink);
+}
+
+.update-status[data-phase="failed"] > .lucide {
+  color: var(--danger);
+}
+
+.update-spin {
+  animation: update-spin 900ms linear infinite;
+}
+
+@keyframes update-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-spin {
+    animation: none;
+  }
+}
+
+.update-progress {
+  display: grid;
+  gap: 6px;
+  margin: -4px 14px 8px 46px;
+}
+
+/* The track, with the bar over it in the same cell. */
+.update-progress::before,
+.update-progress > span {
+  grid-area: 1 / 1;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.update-progress::before {
+  content: "";
+  background: var(--line);
+}
+
+.update-progress > span {
+  display: block;
+  background: var(--accent);
+  transform-origin: left;
+}
+
+.update-progress small {
+  font-size: 12px;
+}
+
+.update-problem {
+  margin: -4px 14px 8px 46px;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.update-release {
+  margin: 0 8px 8px;
+  padding: 12px 14px 14px;
+  border-radius: var(--r-card);
+  background: var(--inset);
+}
+
+.update-release-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.update-release-head strong {
+  font-weight: 500;
+}
+
+.update-release-head .dim {
+  font-size: 13px;
+}
+
+.update-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  padding-left: 18px;
+  overflow-y: auto;
+  color: var(--text-dim);
+  font-size: 13px;
+  list-style: disc;
+  text-wrap: pretty;
+}
+
+.update-manual {
+  padding: 4px 14px 12px 46px;
+  font-size: 13px;
+}

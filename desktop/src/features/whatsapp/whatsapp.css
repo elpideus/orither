@@ -1,0 +1,49 @@
+.whatsapp-page {
+  height: 100%;
+  padding: 6px;
+}
+
+/* The room WhatsApp Web's view is laid over. It is drawn over the window, so
+   only what shows before it opens lives here. */
+.whatsapp-web {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: calc(var(--r-pane) - 6px);
+  background: var(--inset);
+}
+
+.whatsapp-note {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.whatsapp-chats {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  padding: 0 6px 8px;
+  overflow-y: auto;
+}
+
+.whatsapp-chats code,
+.whatsapp-chats pre {
+  font: inherit;
+}
+
+.whatsapp-unread {
+  display: inline-block;
+  min-width: 18px;
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  vertical-align: 1px;
+}

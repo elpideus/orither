@@ -1,0 +1,46 @@
+.clipboard-page {
+  height: 100%;
+}
+
+.clipboard-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0 6px 8px;
+  overflow-y: auto;
+}
+
+.clipboard-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 52px;
+  padding: 8px 12px;
+  border-radius: var(--r-row);
+  transition: background-color var(--fast) ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .clipboard-item:hover {
+    background: var(--hover);
+  }
+}
+
+.clipboard-item p {
+  max-height: 66px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.clipboard-item time {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.clipboard-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 12px;
+}

@@ -1,0 +1,47 @@
+[package]
+name = "orither-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "orither"
+path = "src/main.rs"
+
+[lib]
+name = "orither_desktop"
+path = "src/lib.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow.workspace = true
+arboard = { version = "3.7", features = ["wayland-data-control"] }
+async-trait.workspace = true
+blake3.workspace = true
+gethostname = "1"
+orither-link.workspace = true
+orither-viewer = { path = "../../crates/orither-viewer" }
+png = "0.18"
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+tokio = { workspace = true, features = ["process", "signal"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+bluer = { version = "0.17", features = ["l2cap", "rfcomm"] }
+dbus = "0.9"
+gtk = "0.18"
+libc = "0.2"
+webkit2gtk = { version = "2.0", features = ["v2_40"] }
+xkeysym = "0.2"
