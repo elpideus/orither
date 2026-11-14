@@ -71,6 +71,31 @@ class EngineClient(context: Context) {
         }
     }
 
+    /** The phone's text conversations, newest first. The app has no SMS access of its own. */
+    suspend fun textThreads(): JSONArray = withContext(Dispatchers.IO) {
+        request(JSONObject().put("op", "threads")).getJSONArray("threads")
+    }
+
+    /** The latest messages of one conversation, oldest first. */
+    suspend fun texts(thread: Int): JSONArray = withContext(Dispatchers.IO) {
+        request(JSONObject().put("op", "texts").put("thread", thread)).getJSONArray("texts")
+    }
+
+    /** Calls [arrived] for each incoming text, until the connection breaks. */
+    suspend fun followTexts(arrived: (JSONObject) -> Unit) = withContext(Dispatchers.IO) {
+        open().use { socket ->
+            val cancel = launchClosing(socket)
+            try {
+                val input = BufferedInputStream(socket.getInputStream())
+                Protocol.write(socket.getOutputStream(), JSONObject().put("op", "follow-texts"))
+                checked(Protocol.read(input))
+                while (true) arrived(Protocol.read(input))
+            } finally {
+                cancel.dispose()
+            }
+        }
+    }
+
     /** The bytes behind a content URI the app itself may not open. */
     suspend fun read(uri: String): ParcelFileDescriptor = withContext(Dispatchers.IO) {
         val socket = open()

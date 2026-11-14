@@ -45,6 +45,7 @@ private const val PACKAGE = "dev.orither"
 private const val BUFFER_SIZE = 64 * 1024
 private const val CONNECT_ATTEMPTS = 200
 private const val CONNECT_DELAY_MS = 25L
+private const val TEXTS_SHOWN = 500
 /** How long scrcpy may take to make a display once its channels are connected. */
 private const val DISPLAY_WAIT_S = 10L
 private val NEW_DISPLAY = Regex("""New display: .* \(id=(\d+)\)""")
@@ -70,6 +71,7 @@ private class Engine(private val secret: ByteArray) {
     private val clipboard = shell.map(::ClipboardWatch)
     private val tasks = shell.map(::Tasks)
     private val calls = shell.map(::CallAudio)
+    private val texts = shell.map(::Texts)
 
     fun serve() {
         WORK_DIR.mkdirs()
@@ -103,6 +105,14 @@ private class Engine(private val secret: ByteArray) {
                     reply.put("started", run(listOf("am", "start") + on + words(request.getJSONArray("arguments"))) == 0)
                 }
                 "bluetooth" -> reply.put("address", bluetoothAddress())
+                "threads" -> reply.put("threads", texts.getOrThrow().threads())
+                "texts" -> reply.put("texts", texts.getOrThrow().messages(request.getInt("thread"), request.optInt("limit", TEXTS_SHOWN)))
+                "follow-texts" -> {
+                    val watch = texts.getOrThrow()
+                    Protocol.write(output, reply)
+                    watch.follow(client)
+                    return
+                }
                 "clipboard" -> {
                     val watch = clipboard.getOrThrow()
                     Protocol.write(output, reply)
