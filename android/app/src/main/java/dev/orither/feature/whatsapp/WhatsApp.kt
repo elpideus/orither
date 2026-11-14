@@ -41,7 +41,7 @@ internal class WhatsApp(private val context: Context, private val engine: Engine
         R.drawable.ic_whatsapp,
         isGranted = ::listening,
         settings = { Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS) },
-        grant = listOf("cmd", "notification", "allow_listener", LISTENER),
+        grants = Access.listenerGrants(LISTENER),
     )
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val conversations = Conversations.of(context)

@@ -47,7 +47,7 @@ internal class Files(private val context: Context) : Feature {
         settings = {
             Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, "package:${it.packageName}".toUri())
         },
-        grant = listOf("appops", "set", "--uid", "dev.orither", "MANAGE_EXTERNAL_STORAGE", "allow"),
+        grants = listOf(listOf("appops", "set", "--uid", "dev.orither", "MANAGE_EXTERNAL_STORAGE", "allow")),
     )
 
     override suspend fun call(method: String, body: JsonElement, peer: String): JsonElement = withContext(Dispatchers.IO) {

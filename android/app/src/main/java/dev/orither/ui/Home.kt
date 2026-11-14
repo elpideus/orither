@@ -91,11 +91,15 @@ internal fun Home(peers: List<Peer>, addComputer: () -> Unit, openRemote: (Peer)
     }
     val running = rememberEngineRunning(visits)
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    // What a grant left off, so a button that seems to do nothing says why.
+    var stillOff by remember { mutableStateOf<List<Access>>(emptyList()) }
     val grant: (List<Access>) -> Unit = { accesses ->
         scope.launch {
             runCatching { Features.engine.grant(accesses.flatMap { it.grants }) }
             visits++
             Features.allowed()
+            stillOff = accesses.filterNot { it.isGranted(context) }
         }
     }
     // The computer in front is the one picked, or else the first one the phone reaches now.
@@ -131,7 +135,7 @@ internal fun Home(peers: List<Peer>, addComputer: () -> Unit, openRemote: (Peer)
         Heading(stringResource(R.string.section_access), Modifier.padding(horizontal = 4.dp))
         Tile(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(vertical = 6.dp).animateContentSize(Springs.page())) {
-                Engine(visits, running, grant)
+                Engine(visits, running, stillOff, grant)
                 AccessList(visits, running, grant)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Handoff(visits)
                 if (Build.MANUFACTURER.equals(XIAOMI, ignoreCase = true)) Autostart()
@@ -269,7 +273,7 @@ private fun rememberEngineRunning(visits: Int): Boolean {
 
 /** Whether the part of Orither that only a computer can start is running. */
 @Composable
-private fun Engine(visits: Int, running: Boolean, grant: (List<Access>) -> Unit) {
+private fun Engine(visits: Int, running: Boolean, stillOff: List<Access>, grant: (List<Access>) -> Unit) {
     val context = LocalContext.current
     val missing = remember(visits) { Features.access.filterNot { it.isGranted(context) } }
     val waiting = if (remember(visits) { Features.recovers(context) }) R.string.engine_waiting else R.string.engine_needed
@@ -281,6 +285,15 @@ private fun Engine(visits: Int, running: Boolean, grant: (List<Access>) -> Unit)
     )
     if (running && missing.isNotEmpty()) {
         Quiet(stringResource(R.string.allow_all), Modifier.fillMaxWidth().padding(start = 64.dp, end = 14.dp, bottom = 8.dp)) { grant(missing) }
+        val off = stillOff.filter { it in missing }
+        if (off.isNotEmpty()) {
+            Text(
+                stringResource(R.string.allow_all_partly, off.joinToString { context.getString(it.title) }),
+                Modifier.padding(start = 64.dp, end = 14.dp, bottom = 10.dp),
+                color = Palette.Dim,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
     }
 }
 

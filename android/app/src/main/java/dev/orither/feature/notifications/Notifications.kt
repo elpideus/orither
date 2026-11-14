@@ -81,7 +81,7 @@ internal class Notifications(private val context: Context, private val engine: E
         R.drawable.ic_bell,
         isGranted = ::listening,
         settings = { Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS) },
-        grant = listOf("cmd", "notification", "allow_listener", LISTENER),
+        grants = Access.listenerGrants(LISTENER),
     )
 
     override suspend fun call(method: String, body: JsonElement, peer: String): JsonElement = when (method) {

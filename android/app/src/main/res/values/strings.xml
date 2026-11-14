@@ -29,9 +29,10 @@
     <string name="allowed">On</string>
     <string name="allow">Allow</string>
     <string name="allow_all">Turn everything on</string>
+    <string name="allow_all_partly">Android kept these off: %1$s. Use Allow beside each one.</string>
     <string name="allow_with_usb">Needs USB</string>
     <string name="engine_title">Screen and control</string>
-    <string name="engine_ready">Ready. Screen, apps, clipboard and more work from your computer.</string>
+    <string name="engine_ready">Ready. Screen, apps, messages, clipboard and more work from your computer.</string>
     <string name="engine_needed">Connect this phone to your computer with a USB cable once to unlock these.</string>
     <string name="engine_waiting">Your computer starts this again over Wi-Fi when it next connects.</string>
     <string name="handoff_tile">Send to computer</string>
@@ -47,8 +48,6 @@
 
     <string name="access_notifications">Notifications</string>
     <string name="access_notifications_about">See and open them on your computer</string>
-    <string name="access_messages">Messages</string>
-    <string name="access_messages_about">Read texts and copy codes</string>
     <string name="access_whatsapp">WhatsApp</string>
     <string name="access_whatsapp_about">See new messages on your computer</string>
     <string name="access_photos">Photos</string>

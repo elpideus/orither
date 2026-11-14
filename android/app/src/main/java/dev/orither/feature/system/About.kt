@@ -50,7 +50,7 @@ internal class About(private val context: Context) : Feature {
         R.drawable.ic_battery,
         isGranted = { it.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(it.packageName) },
         settings = { Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${it.packageName}".toUri()) },
-        grant = listOf("cmd", "deviceidle", "whitelist", "+dev.orither"),
+        grants = listOf(listOf("cmd", "deviceidle", "whitelist", "+dev.orither")),
     )
     private var reported: Battery? = null
 

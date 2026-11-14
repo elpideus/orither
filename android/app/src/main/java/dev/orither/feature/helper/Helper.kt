@@ -18,6 +18,7 @@ import dev.orither.R
 import dev.orither.engine.EngineClient
 import dev.orither.feature.Access
 import dev.orither.feature.Feature
+import dev.orither.feature.Features
 import dev.orither.feature.body
 import dev.orither.feature.flag
 import dev.orither.feature.number
@@ -73,6 +74,10 @@ private data class Status(val running: Boolean, val launch: String, val model: S
 @Serializable
 private data class Opened(val state: String, val port: Int? = null)
 
+/** What a computer's request to turn everything on left off, by name. */
+@Serializable
+private data class Allowed(val missing: List<String>)
+
 /**
  * Lets a computer start the engine without a cable, which is what a restarted phone
  * needs. Only adb can start the engine, so the computer brings its own: this turns
@@ -111,6 +116,7 @@ internal class Helper(private val context: Context, private val engine: EngineCl
     override suspend fun call(method: String, body: JsonElement, peer: String): JsonElement = when (method) {
         "status" -> body(Status(engine.isRunning(), engine.launchCommand, Build.MODEL, access.isGranted(context)))
         "open" -> body(lock.withLock { open(body.flag("quiet"), peer) })
+        "allow" -> body(allowAll())
         else -> super.call(method, body, peer)
     }
 
@@ -133,6 +139,19 @@ internal class Helper(private val context: Context, private val engine: EngineCl
 
     override fun disconnected(peer: String) {
         scope.launch { lock.withLock { if (peer == owner) close() } }
+    }
+
+    /**
+     * Turns on everything the engine can, for a computer setting the phone up over USB, and says
+     * what is still off afterwards. Reading each one again is what counts, not the commands' exit
+     * codes, since some fail harmlessly on Android versions that lack them.
+     */
+    private suspend fun allowAll(): Allowed {
+        check(engine.isRunning()) { "Orither's helper is not running on the phone" }
+        val missing = Features.access.filterNot { it.isGranted(context) }
+        if (missing.isNotEmpty()) runCatching { engine.grant(missing.flatMap { it.grants }) }
+        Features.allowed()
+        return Allowed(Features.access.filterNot { it.isGranted(context) }.map { context.getString(it.title) })
     }
 
     /** The user is looking at the phone, which is the moment for Android to ask about this network. */
