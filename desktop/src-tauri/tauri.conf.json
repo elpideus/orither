@@ -44,7 +44,8 @@
     ],
     "resources": {
       "../../LICENSE": "LICENSE",
-      "../../NOTICE": "NOTICE"
+      "../../NOTICE": "NOTICE",
+      "../../licenses/Apache-2.0.txt": "licenses/Apache-2.0.txt"
     },
     "linux": {
       "appimage": {

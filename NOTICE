@@ -23,6 +23,16 @@ https://github.com/Genymobile/scrcpy
   Licensed under the Apache License, Version 2.0, see licenses/Apache-2.0.txt.
 
 
+Android Debug Bridge (adb), from Android SDK Platform-Tools 37.0.3
+Inside the desktop app, as adb/. Built by Google from the Android Open Source Project.
+https://developer.android.com/tools/releases/platform-tools
+
+  Copyright (C) The Android Open Source Project
+
+  Licensed under the Apache License, Version 2.0, see licenses/Apache-2.0.txt.
+  The notices of everything adb is built from are in adb/NOTICE.txt beside it.
+
+
 OpenH264
 Compiled from source into the desktop app through the openh264 crate.
 https://github.com/cisco/openh264

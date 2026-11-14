@@ -62,3 +62,15 @@ test('the sign job signs with the tauri CLI version the desktop app is built wit
   const locked = lock.match(/'@tauri-apps\/cli@([\d.]+)':/)[1];
   assert.equal(pinned, locked);
 });
+
+test('the installers carry a pinned adb for each system', async () => {
+  const { PLATFORM_TOOLS } = await import('./fetch-adb.mjs');
+  const workflow = readFileSync(path.join(root, '.github/workflows/release.yml'), 'utf8');
+  for (const os of ['windows', 'linux']) {
+    assert.match(PLATFORM_TOOLS[os].sha1, /^[0-9a-f]{40}$/);
+    assert.ok(workflow.includes(`node scripts/fetch-adb.mjs ${os}`), `release.yml does not fetch adb for ${os}`);
+    const config = JSON.parse(readFileSync(path.join(root, `desktop/src-tauri/adb.${os}.conf.json`), 'utf8'));
+    for (const file of PLATFORM_TOOLS[os].files) assert.ok(config.bundle.resources[`adb/${file}`], `adb.${os}.conf.json does not carry ${file}`);
+    assert.ok(workflow.includes(`--config src-tauri/adb.${os}.conf.json`), `release.yml does not bundle adb for ${os}`);
+  }
+});

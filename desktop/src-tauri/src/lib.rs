@@ -2,6 +2,7 @@
 //! [`features`]; a feature that only shows the phone's data needs nothing here
 //! at all, because the UI's calls pass straight through to the phone.
 
+mod adb;
 mod autostart;
 mod features;
 #[cfg(target_os = "linux")]
@@ -95,6 +96,7 @@ fn run() {
             theme::theme,
         ])
         .setup(|app| {
+            adb::locate(app.handle());
             let data_dir = app.path().app_data_dir().context("no data directory")?;
             let name = gethostname::gethostname().to_string_lossy().into_owned();
             let device = Device { name, kind: DeviceKind::Desktop };

@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "resources": {
+      "adb/adb.exe": "adb/adb.exe",
+      "adb/AdbWinApi.dll": "adb/AdbWinApi.dll",
+      "adb/AdbWinUsbApi.dll": "adb/AdbWinUsbApi.dll",
+      "adb/NOTICE.txt": "adb/NOTICE.txt"
+    }
+  }
+}

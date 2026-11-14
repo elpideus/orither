@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "adb/adb": "adb/adb",
+      "adb/NOTICE.txt": "adb/NOTICE.txt"
+    }
+  }
+}

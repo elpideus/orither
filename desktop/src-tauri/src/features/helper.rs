@@ -6,22 +6,20 @@
 
 use std::{
     collections::HashMap,
-    env, fmt,
+    fmt,
     net::Ipv4Addr,
-    path::{Path, PathBuf},
     process::Output,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use orither_link::{PeerId, Session};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tauri::async_runtime;
 use tokio::{
     net::TcpListener,
-    process::Command,
     sync::Mutex,
     time::{Instant, sleep},
 };
@@ -43,7 +41,6 @@ const CONTACT: &str = "helper-contact";
 
 const NEEDS_USB: &str =
     "Connect your phone to this computer with a USB cable once, so that Orither can start its helper on it.";
-const NEEDS_ADB: &str = "Install Android's adb tool, so that Orither can start its helper on your phone";
 const NEEDS_TRUST: &str = "Allow USB debugging on your phone, with Always allow from this computer ticked.";
 const NEEDS_WIFI: &str = "Connect your phone to Wi-Fi, so that Orither can start its helper without a cable.";
 const NEEDS_KEY: &str =
@@ -123,18 +120,8 @@ pub async fn ensure_engine(phone: &Phone, session: &Session) -> Result<()> {
     Ok(())
 }
 
-fn tool() -> PathBuf {
-    let in_sdk = |sdk: PathBuf| sdk.join("platform-tools/adb");
-    let candidates = env::var_os("ANDROID_HOME")
-        .map(|sdk| in_sdk(sdk.into()))
-        .into_iter()
-        .chain(env::var_os("HOME").map(|home| in_sdk(Path::new(&home).join("Android/Sdk"))));
-    let found = candidates.into_iter().find(|path| path.exists());
-    found.unwrap_or_else(|| "adb".into())
-}
-
 async fn adb(args: &[&str]) -> Result<Output> {
-    Command::new(tool()).args(args).kill_on_drop(true).output().await.context(NEEDS_ADB)
+    crate::adb::run(args).await
 }
 
 async fn shell(serial: &str, command: &str) -> Result<()> {

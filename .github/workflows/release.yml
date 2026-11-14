@@ -84,9 +84,13 @@ jobs:
         working-directory: desktop
         run: pnpm install --frozen-lockfile
 
+      # Android's adb, which Orither carries so nobody has to install it (scripts/fetch-adb.mjs).
+      - name: adb
+        run: node scripts/fetch-adb.mjs windows
+
       - name: Build
         working-directory: desktop
-        run: pnpm tauri build --bundles nsis
+        run: pnpm tauri build --bundles nsis --config src-tauri/adb.windows.conf.json
 
       # A name without the version, so the README's download links always reach the newest one.
       - name: Collect the installer
@@ -155,9 +159,12 @@ jobs:
         working-directory: desktop
         run: pnpm install --frozen-lockfile
 
+      - name: adb
+        run: node scripts/fetch-adb.mjs linux
+
       - name: Build
         working-directory: desktop
-        run: pnpm tauri build --bundles deb,rpm,appimage
+        run: pnpm tauri build --bundles deb,rpm,appimage --config src-tauri/adb.linux.conf.json
 
       # Names without the version, so the README's download links always reach the newest ones. An
       # AppImage also replaces itself when it updates, so a version in its name would soon be wrong.
