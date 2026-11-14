@@ -134,6 +134,40 @@ The engine runs the scrcpy server for video, control and microphone audio, and
 offers `grant`, `activity`, `bluetooth`, `clipboard` and a few more operations.
 It reads scrcpy's output to learn the id of each display a capture makes.
 
+**It reads the texts, too** (`Texts.kt`): the app asks for no SMS access, since Play
+Protect blocks any app from outside Google Play that asks for `READ_SMS` or
+`RECEIVE_SMS`. The engine runs Android's `content query` command, as the shell, for
+`threads`, `texts`, `newest-text` and `texts-since`: a content resolver in the engine
+names the system's package as the caller, which Android refuses from the shell's
+uid, and Android sends the engine no change reports either, as it is no app process
+Android knows. So the app asks for new texts when the default SMS app posts a
+notification, and every 30 seconds while a computer is connected, and adds contact
+names with its own contacts permission.
+
+**adb comes with Orither** (`adb.rs`): the installers carry Android's platform-tools
+adb (`scripts/fetch-adb.mjs`, `adb.<os>.conf.json`). An adb the person installed
+comes first, since two adb versions stop each other's server. On Windows it runs
+without a console window.
+
+### Setting a phone up over USB
+
+`features/setup.rs` does the whole setup with one cable. The pairing screen lists
+what `adb devices` sees (`setup/devices`); **Set up** (`setup/start`) then:
+
+1. installs the Android app of the computer's version with `adb install -r -g`
+   (downloaded from the release and checked against its `SHA256SUMS`), unless the
+   phone has it. Play Protect checks USB installs too, so the step waits for the
+   person to confirm on the phone, and explains adb's failure codes;
+2. links the phone by opening the pairing link the screen shows on it
+   (`am start -d orither://pair/…`), unless it is linked already;
+3. starts the engine (`helper::ensure_engine`);
+4. asks the app to turn everything on (`helper/allow`), which reports what Android
+   kept off.
+
+Nothing is installed from a file on the phone, so Android's restricted settings
+don't apply. For an app that was, its grants first set the `ACCESS_RESTRICTED_SETTINGS`
+app-op, as Android's own "Allow restricted settings" does.
+
 ### After a phone restart
 
 The link comes back by itself after a restart, but the engine does not, and only
@@ -190,7 +224,10 @@ A separate process keeps a decoder crash or GPU trouble out of the main app.
 Integrated Mode starts the app on a virtual display of its own (`new_display`,
 `flex_display`), so a resized window resizes the phone's display and the app reflows.
 On Linux it also writes `orither-<package>.desktop`, whose `StartupWMClass` matches
-the window, which gives it the app's icon and name in the taskbar and launcher.
+the window, which gives it the app's icon and name in the taskbar and launcher. On
+Windows it writes a Start-menu shortcut under **Orither apps** with the app's icon
+and the app id `orither-<package>`, which the viewer takes too, so each phone app has
+a taskbar button of its own (`screen/shortcut.rs`).
 
 A window that follows its size opens before the capture starts. Its first message
 is its size, which becomes the display's size from the start, so that an app adapts
@@ -269,7 +306,12 @@ too, and removes any a crash left behind when it starts.
 The WhatsApp page is WhatsApp Web, WhatsApp's own site, loaded from
 `web.whatsapp.com`. Orither adds no scripts or user agent of its own, and does only
 what a browser does. It never uses an unofficial client, which keeps the account
-safe. Only Linux has it so far (`whatsapp/web.rs`).
+safe. Linux has it in `whatsapp/web.rs`, Windows in `whatsapp/web_windows.rs`.
+
+On Windows it is WebView2, hosted directly through `webview2-com` in a child window
+over the page's slot, with its own profile. Tauri's own webviews carry Tauri's
+scripts, which WhatsApp Web must not get. WebView2 takes no user style sheet, so on
+Windows WhatsApp keeps its own colours and only follows light or dark.
 
 - **The view** is a second WebKitGTK view. Tauri cannot place one on Linux, so at
   start the window's own view moves into a `gtk::Overlay`, and WhatsApp Web's lies
@@ -329,8 +371,11 @@ importance or when Do Not Disturb holds it back.
 
 On Linux the computer shows them through `org.freedesktop.Notifications` on the
 session bus, with the app's name and icon and the notification's own picture, one
-per notification key. Elsewhere it only pops up those that alert, through Tauri's
-notification plugin, and a click does nothing.
+per notification key. On Windows they are toasts under Orither's app id (the one its
+installer's Start-menu shortcut carries), tagged by notification key, so the phone
+can replace and remove them, and a click or a close comes back the same way. A
+notification that says what it said before does not pop up again, and at most three
+pop up in ten seconds.
 
 - **A click** opens the app in Integrated Mode, or in the window it has already. The
   engine starts `OpenActivity` on that window's display (`activity` with the
@@ -420,7 +465,8 @@ phone's Bluetooth settings.
 ## Theme
 
 `theme.rs` reads `kdeglobals` on KDE, and asks the XDG portal for a light or dark
-preference and an accent elsewhere. It checks again every 2 seconds, and the UI
+preference and an accent elsewhere on Linux. On Windows it reads the apps' light or
+dark mode and the accent colour from the registry. It checks again every 2 seconds, and the UI
 falls back to neutrals close to Breeze Dark with a green accent. The UI derives
 every other colour from those seven, and tells a light theme from a dark one by
 the window colour's luminance. The phone app follows the phone's own light or
@@ -460,6 +506,11 @@ interface, which asks the user once and is then remembered with a restore token
 chord such as Ctrl+C is the key Control held, the text "c", and Control released.
 The session closes after 10 minutes without input and opens again silently.
 
+On Windows the same notices become `SendInput` calls (`input/windows.rs`): no
+permission to ask, text as Unicode keystrokes, and named keys as virtual keys. Text
+typed while Ctrl, Alt or Win is held goes as the layout's own key, so shortcuts
+work. Windows keeps programs running as administrator out of reach.
+
 ## Feature methods
 
 Dates are in milliseconds. These are on the phone unless marked otherwise.
@@ -467,7 +518,7 @@ Dates are in milliseconds. These are on the phone unless marked otherwise.
 | Feature | Calls | Notices | Streams |
 | --- | --- | --- | --- |
 | `system` | `battery`, `about` | to computer: `battery` | `wallpaper` |
-| `sms` | `threads`, `messages {thread}` | to computer: `received` | |
+| `sms` | `threads`, `messages {thread}` (read by the engine) | to computer: `received` | |
 | `whatsapp` | `chats`, `allow` | to computer: `changed` | |
 | `notifications` | `list`, `open {key,app,session?}`, `dismiss {key}` | to computer: `posted`, `removed {key}` | `picture {key}` |
 | `gallery` | `albums`, `items {album?,offset,limit}` | | `thumbnail {id,size}`, `original {id}` |
@@ -477,7 +528,7 @@ Dates are in milliseconds. These are on the phone unless marked otherwise.
 | `screen` | `start {options,channels}`, `stop {session}`, `foreground`, `move {session,task}` | to computer: `handoff` | `attach {session,channel}` |
 | `speaker` | | | `play` |
 | `nearby` | | to computer: `address {address}` | |
-| `helper` | `status`, `open {quiet}` | `close`; to computer: `ready`, `asking` | `connect {port}` |
+| `helper` | `status`, `open {quiet}`, `allow` | `close`; to computer: `ready`, `asking` | `connect {port}` |
 | `calls` | `list`, `answer {id}`, `decline {id}`, `hangup {id}`, `dial {number}`, `contacts {query?,limit?}`, `place {data}`, `recents {limit?}` | to computer: `changed {calls}` | `picture {id}`, `contact-picture {id}` |
 
 The phone calls these on the computer:
@@ -500,6 +551,7 @@ The computer answers these calls from the UI itself:
 | `helper` | | `waking`, `woke`, `rehearsing`, `rehearsed`, `failed {error}` |
 | `calls` | `audio {peer?}`, `pair {peer?}`, `route {to,peer?}` | `audio {state,where,detail}` |
 | `updates` | `status`, `check`, `download`, `install`, `open`, `auto {on}` | `status` |
+| `setup` | `devices`, `start {serial, invite?}` | `progress {serial, step}`, `done {serial, missing}`, `failed {serial, error}` |
 
 The UI loads media through the `orither://localhost/<feature>/<method>?b=<json>&p=<phone>`
 URI scheme, which turns a stream from that phone into something an `<img>` tag can show.

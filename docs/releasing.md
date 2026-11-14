@@ -33,7 +33,10 @@ The Android version code follows from the version: 1.2.3 is 1002003.
 ## What the workflow does
 
 1. **Checks**: the whole of [CI](../.github/workflows/ci.yml) runs on the tag.
-2. **Builds**, each on its own runner, none of which sees a signing key:
+2. **Builds**, each on its own runner, none of which sees a signing key. The
+   desktop builds carry Android's adb (`scripts/fetch-adb.mjs`, pinned to a
+   platform-tools version and its checksum, passed to `tauri build` with
+   `--config src-tauri/adb.<os>.conf.json`):
    - Windows: the NSIS installer, `Orither-Setup-x64.exe`.
    - Linux, on Ubuntu 22.04 so the binaries need no newer glibc than it has:
      `Orither-x86_64.AppImage`, `orither_amd64.deb` and `orither.x86_64.rpm`.
@@ -124,12 +127,29 @@ ORITHER_KEY_PASSWORD="$(cat ~/.orither-signing/android.password)" \
 Without those variables, release builds are signed with the computer's debug
 key, which installs only where no release-signed Orither is installed.
 
+## Play Protect
+
+Play Protect judges an APK from outside Google Play by what it asks for. It
+blocks one that asks for `READ_SMS` or `RECEIVE_SMS` as harmful, whatever else it
+does, which is why the app reads texts through its helper. Before releasing a
+change to `AndroidManifest.xml`, let Play Protect judge the new APK on the test
+emulator ([testing.md](testing.md)):
+
+```bash
+tools/testbed/android.sh scan android/app/build/outputs/apk/release/app-release.apk
+```
+
+It should say "This app looks safe". If a release is blocked anyway, the developer
+can ask Google to review it as a false positive at
+<https://support.google.com/googleplay/android-developer/contact/protectappeals>.
+
 ## Not done yet
 
 - The Windows installer is not code-signed, so SmartScreen warns about it until
   it builds a reputation. A code-signing certificate would go in the sign job.
-- The Android app does not update itself. The desktop app could offer the
-  matching APK to the phone, or the app could read `latest.json` itself.
+- The Android app does not update itself. Plugging the phone in and choosing
+  **Set up** installs the version that matches the computer; the desktop could
+  offer that by itself when the versions differ.
 - Release builds of the Android app are not shrunk with R8 yet
   (`isMinifyEnabled` in `android/app/build.gradle.kts`): nobody has tried a
   shrunk build on a phone.

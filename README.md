@@ -23,7 +23,7 @@ across the world.
 | **Linux**, any distribution | [Orither-x86_64.AppImage](https://github.com/elpideus/orither/releases/latest/download/Orither-x86_64.AppImage) |
 | **Debian, Ubuntu** and derivatives | [orither_amd64.deb](https://github.com/elpideus/orither/releases/latest/download/orither_amd64.deb) |
 | **Fedora, openSUSE** and derivatives | [orither.x86_64.rpm](https://github.com/elpideus/orither/releases/latest/download/orither.x86_64.rpm) |
-| **Android** 10 or newer, 64-bit | [Orither-android-arm64.apk](https://github.com/elpideus/orither/releases/latest/download/Orither-android-arm64.apk) |
+| **Android** 10 or newer, 64-bit | Nothing to download: Orither on the computer installs it over USB. Or [Orither-android-arm64.apk](https://github.com/elpideus/orither/releases/latest/download/Orither-android-arm64.apk) |
 
 These always reach the newest release. Every release, with its changes and
 checksums, is on the [releases page](https://github.com/elpideus/orither/releases).
@@ -47,8 +47,10 @@ sudo apt install ./orither_amd64.deb
 sudo dnf install ./orither.x86_64.rpm
 ```
 
-**Android:** open the APK on the phone and allow installing it. Android asks
-once to allow apps from the browser or the file manager it was opened in.
+**Android:** the easiest way is to let Orither on the computer install it, see
+[Getting started](#getting-started). To install the APK yourself, open it on the
+phone and allow installing it. Android asks once to allow apps from the browser
+or file manager it was opened in, and Play Protect may offer to scan it first.
 
 ### Updates
 
@@ -61,15 +63,16 @@ Every update is signed, and Orither installs only updates signed with its own
 key. **Download updates automatically** in Settings turns the downloads off.
 
 The .deb and .rpm packages update themselves too, when you restart Orither.
-Installing asks for your password, as with any system package. The Android app does not update itself
-yet: install the new APK over the old one.
+Installing asks for your password, as with any system package. The Android app
+does not update itself yet: plug the phone in and use **Set up** again (it
+installs the matching version), or install the new APK over the old one.
 
 ## What it does
 
 | | |
 | --- | --- |
 | **Linking** | Scan a QR code or type a short code. The link survives restarts and changing networks. |
-| **Messages** | Read SMS threads. One-time codes get a copy button. |
+| **Messages** | Read SMS threads. One-time codes get a copy button, and pop up as they arrive. |
 | **Several phones** | Link as many of your phones as you like. One is in focus, and the others are a click away on the orbit at the top of the window. Calls and notifications come in from all of them. |
 | **WhatsApp** | WhatsApp Web, WhatsApp's own, as a page of Orither: every chat, to read, answer and send files. The home page shows the latest chats from the phone. |
 | **Calls** | Answer, decline and make calls from the computer: phone calls, and WhatsApp, Telegram, Signal and other apps' calls. Once the phone is paired with the computer over Bluetooth, the call uses the computer's microphone and speakers or headphones. |
@@ -85,16 +88,28 @@ yet: install the new APK over the old one.
 
 ## Getting started
 
-1. [Install](#download) the Android app on the phone and the desktop app on
-   the computer.
-2. Open both. The computer shows a code. Scan it with the phone, or type it in.
-3. Connect the phone with a USB cable once, with **USB debugging** turned on in
-   the phone's developer options, and allow the computer when the phone asks.
-   The computer needs Android's `adb` tool for this.
+1. [Install Orither](#download) on the computer and open it.
+2. On the phone, turn on **USB debugging**: tap **Build number** seven times in
+   **Settings › About phone**, then turn on USB debugging in **Developer
+   options**.
+3. Connect the phone with a USB cable, and allow the computer when the phone
+   asks. Orither lists the phone under **Set up over USB**: click **Set up**.
 
-Step 3 starts a small helper on the phone. Android only allows that over USB,
-and the screen, apps, clipboard watching, microphone, camera and Bluetooth all
-rely on it. The helper keeps running without the cable until the phone restarts.
+Orither installs its app on the phone, links it, starts its helper there and
+turns everything on, in about a minute. Nothing is downloaded on the phone, so
+Android's restricted settings and Play Protect's checks on downloaded apps don't
+get in the way. Orither carries Android's `adb` tool itself, so there is nothing
+else to install, on Windows too.
+
+Already have Orither on the phone? Open both, then scan the code the computer
+shows, or type it in. Connect the phone with a USB cable once afterwards, so
+that Orither can start its helper; in the app, **Turn everything on** then
+allows everything at once.
+
+The helper is the part of Orither that runs on the phone with the rights of
+Android's debugging tools. Android only lets a computer start it, and the
+screen, apps, messages, clipboard watching, microphone, camera and Bluetooth all
+rely on it. It keeps running without the cable until the phone restarts.
 
 After a restart, the computer starts the helper again over Wi-Fi, if **After
 restarts** is allowed on the phone. It does this through Android's wireless
@@ -104,8 +119,16 @@ this network** ticked. The two devices do not need to share the network.
 Android forgets a computer that has not used debugging for a week, so Orither
 checks in every few days while they are linked.
 
-Linking, SMS, WhatsApp, the gallery, files and the speaker work without it.
+Linking, WhatsApp, calls, the gallery, files and the speaker work without it.
 So do notifications, though opening one in a window needs it.
+
+### Play Protect and the Android app
+
+Orither's Android app asks for no SMS access. Play Protect blocks any app from
+outside Google Play that does, as harmful, and that is what blocked Orither
+0.1.1 and earlier. From 0.2.0 the phone's helper reads the texts instead, so
+Play Protect lets the app install. If Play Protect still asks, let it **Scan
+app**, then install.
 
 ## How the devices reach each other
 
@@ -126,14 +149,28 @@ that two devices are talking and from which addresses.
 
 ## Status
 
-This is an early version. It has been tested on one setup: a Xiaomi POCO F7 on
-Android 16 with a Linux computer running KDE Plasma.
+This is an early version. It has been tested on a Xiaomi POCO F7 on Android 16
+with a Linux computer running KDE Plasma, and on an Android 16 emulator with
+Linux and with a Windows 11 virtual machine.
+
+**Windows** has nearly everything Linux has: setup over USB, the screen, apps in
+windows of their own (each with its own taskbar button and a Start-menu
+shortcut), messages, WhatsApp Web, notifications that open on a click and close
+with the phone, the clipboard, photos, files, calls from the computer, the phone
+as a trackpad and keyboard, and the system's light or dark mode and accent
+colour. Not on Windows yet:
+
+- the phone's speaker, microphone and camera as devices of the computer, which
+  need signed virtual-device drivers that Orither does not have;
+- calls through the computer's microphone and speakers, which rely on Linux's
+  Bluetooth hands-free support;
+- the Bluetooth route between the devices.
+
+Windows asks once whether Orither may use the network: choose **Allow**, or the
+devices can only reach each other through the relay.
 
 **Known limits**
 
-- **Windows:** every release has an installer, built and checked by CI, but
-  Orither has not yet been tried on a Windows computer. There is no Bluetooth
-  route, and the speaker and microphone need a virtual audio driver.
 - **Phone restarts:** the helper only starts again when the phone is on Wi-Fi.
   Without Wi-Fi, or after a week apart, it needs the cable. So far this has been
   tried with a stopped helper, not yet with a real restart.
@@ -144,18 +181,23 @@ Android 16 with a Linux computer running KDE Plasma.
   files. The speaker's raw audio does not fit, and the screen drops to a low
   quality. After a link, the phone lists the computer among its Bluetooth devices
   until the next link.
-- **WhatsApp:** WhatsApp Web is built in on Linux only so far. It is WhatsApp's
-  own site, shown unchanged, and is linked like any WhatsApp Web, from **Linked
-  devices** on the phone. Orither is not affiliated with WhatsApp. A click on the
+- **WhatsApp:** WhatsApp Web is WhatsApp's own site, shown unchanged, and is
+  linked like any WhatsApp Web, from **Linked devices** on the phone. Orither is
+  not affiliated with WhatsApp. On Windows it keeps WhatsApp's own colours, since
+  its browser engine takes no user style sheet. A click on the
   phone's notification finds the chat through WhatsApp Web's own notification for
   it, or by phone number, and otherwise opens on the chat list. The chats on the
   home board start when notification access is granted.
-- **Notifications:** need the same notification access as WhatsApp. Only Linux
-  opens them on a click and closes them along with the phone, and elsewhere they
-  only pop up. They have been tested with a stand-in notification server and a test
-  app, not yet with Plasma's or GNOME's own. A click on one whose app has a window
-  already opens it there, but does not bring the window to the front.
-- **SMS:** RCS messages are not in Android's SMS store, so they do not show up.
+- **Notifications:** need the same notification access as WhatsApp. They have
+  been tested with a stand-in notification server and a test app, not yet with
+  Plasma's or GNOME's own. A click on one whose app has a window already opens it
+  there, but does not bring the window to the front. On Windows, clearing one
+  from the notification centre does not clear it on the phone (Windows only tells
+  Store apps).
+- **SMS:** read by the phone's helper, so they need it running. A new text
+  reaches the computer when the phone's SMS app shows its notification, or within
+  half a minute. RCS messages are not in Android's SMS store, so they do not show
+  up.
 - **Camera:** needs the `v4l2loopback` kernel module on Linux. The first time,
   **Set up** beside the camera asks for your password once and makes it load at
   every start, so there is no command to type. If another program, such as OBS,
@@ -172,7 +214,8 @@ Android 16 with a Linux computer running KDE Plasma.
   notification's buttons. Not yet tried with a real call.
 - **Trackpad and keyboard:** Linux on Wayland or X11 through the desktop's remote
   control permission, which the computer asks for once. Typing uses the computer's
-  keyboard layout, so characters it lacks are skipped. Not yet tried on a device.
+  keyboard layout, so characters it lacks are skipped. On Windows it works without
+  asking, but cannot reach programs running as administrator.
 - **Xiaomi phones:** HyperOS may stop Orither in the background unless **Autostart**
   is on. The app shows a shortcut to that setting on these phones.
 - **Also untested:** scanning with the phone's camera (the QR code itself is tested
@@ -184,9 +227,11 @@ Android 16 with a Linux computer running KDE Plasma.
 **Phone:** Android 10 or newer, 64-bit ARM.
 
 **Computer:** Windows 10 or 11, or 64-bit Linux with WebKitGTK 4.1 (Ubuntu
-22.04, Fedora 36 or newer, and their peers). On Linux, full use needs `adb`,
-PulseAudio or PipeWire (`pactl`), BlueZ, and `v4l2loopback`; the packages bring
-or recommend all but the last.
+22.04, Fedora 36 or newer, and their peers). Orither carries Android's `adb`.
+On Linux, the phone's speaker, microphone and camera need PulseAudio or PipeWire
+(`pactl`), BlueZ, and `v4l2loopback`; the packages bring or recommend all but the
+last. Some Windows computers need the phone maker's USB driver for USB debugging
+(Samsung's, for example); most phones work without one.
 
 ## Building
 
@@ -200,13 +245,19 @@ pnpm install
 pnpm tauri dev
 ```
 
-Installers land in `target/release/bundle`:
+Installers land in `target/release/bundle`. They carry Android's `adb`, which a
+script fetches first (pinned and checked):
 
 ```bash
-pnpm tauri build --bundles deb,rpm,appimage
+node ../scripts/fetch-adb.mjs linux
 ```
 
-On Windows, `--bundles nsis` makes the installer.
+```bash
+pnpm tauri build --bundles deb,rpm,appimage --config src-tauri/adb.linux.conf.json
+```
+
+On Windows, `fetch-adb.mjs windows` and `--bundles nsis --config
+src-tauri/adb.windows.conf.json` make the installer.
 
 On rolling distributions, `linuxdeploy` can fail while stripping the AppImage's
 libraries. Setting `NO_STRIP=true` for that command gets past it. The AppImage
@@ -270,6 +321,7 @@ crates/orither-link     The encrypted link: identity, pairing, routes, sessions
 crates/orither-viewer   The window that decodes a phone screen and takes input
 crates/orither-ffi      The link, as the Android app calls it
 scripts                 Versions and releases, see docs/releasing.md
+tools/testbed           An Android emulator, an isolated Linux session and a Windows VM, see docs/testing.md
 desktop/src             The UI: React, with one folder per feature
 desktop/src-tauri       The desktop app: Tauri, with one module per feature
 android                 The Android app: Compose, with one package per feature
