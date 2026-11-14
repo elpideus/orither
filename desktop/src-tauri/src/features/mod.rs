@@ -12,6 +12,7 @@ pub mod screen;
 mod setup;
 mod transfer;
 mod updates;
+pub use updates::restarted_by_click;
 mod whatsapp;
 
 use std::{

@@ -110,9 +110,11 @@ fn run() {
             #[cfg(unix)]
             quit_on_terminate(app.handle().clone());
             let args: Vec<String> = std::env::args().collect();
+            let background = args.iter().any(|arg| arg == BACKGROUND);
+            let clicked = features::restarted_by_click(app.handle());
             match requested_app(&args) {
                 Some(package) => open_app(app.handle(), package),
-                None if !args.iter().any(|arg| arg == BACKGROUND) => show_window(app.handle()),
+                None if !background || clicked => show_window(app.handle()),
                 None => {}
             }
             Ok(())

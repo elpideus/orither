@@ -20,7 +20,7 @@ use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tauri::{Manager, async_runtime, utils::config::BundleType};
+use tauri::{AppHandle, Manager, async_runtime, utils::config::BundleType};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::{Error as UpdateError, Update, UpdaterExt};
 
@@ -28,6 +28,8 @@ use super::{Feature, Phone};
 use crate::{link::Link, preferences};
 
 const ID: &str = "updates";
+/// Where the tries to install an update at login are counted.
+const ATTEMPTS: &str = "update-attempts";
 /// Where the choice to download updates by themselves is remembered.
 const AUTO: &str = "auto-update";
 /// The first check waits for the network, which may still be coming up at login.
@@ -375,7 +377,7 @@ impl Updates {
     }
 
     fn file_for(&self, version: &str) -> Result<PathBuf> {
-        Ok(self.folder()?.join(format!("orither-{version}.update")))
+        Ok(self.folder()?.join(download_name(version)))
     }
 
     /// Whether `update` was downloaded before and still passes its signature check.
@@ -414,11 +416,11 @@ impl Updates {
     }
 
     fn attempts(&self) -> Attempts {
-        preferences::read(&self.phone.app, "update-attempts").unwrap_or_default()
+        preferences::read(&self.phone.app, ATTEMPTS).unwrap_or_default()
     }
 
     fn save_attempts(&self, attempts: &Attempts) {
-        preferences::write(&self.phone.app, "update-attempts", attempts);
+        preferences::write(&self.phone.app, ATTEMPTS, attempts);
     }
 
     fn set_auto(self: &Arc<Self>, on: bool) {
@@ -485,6 +487,8 @@ impl Feature for Handle {
             "download" => updates.start_download(),
             "open" => updates.open_page(),
             "install" => {
+                // Installed by a click, it is no attempt at login, and the window comes back after.
+                updates.save_attempts(&Attempts::default());
                 let updates = updates.clone();
                 async_runtime::spawn(async move { updates.install().await });
                 Ok(())
@@ -500,6 +504,27 @@ impl Feature for Handle {
         };
         Some(result.map(|()| json!(updates.status())))
     }
+}
+
+/// Whether this start follows an update someone installed with a click, so the window opens
+/// even if Orither had started at login. The installer, and a restart, start Orither again with
+/// the arguments it had, `--background` among them, and one that came back only in the tray
+/// looked as if it had crashed. The version before leaves its download in the cache, and one
+/// that installed at login counted the attempt first.
+pub fn restarted_by_click(app: &AppHandle) -> bool {
+    let version = app.package_info().version.to_string();
+    let Ok(cache) = app.path().app_cache_dir() else { return false };
+    // Its job is done, and left there it would count again at the next login.
+    let left = std::fs::remove_file(cache.join("updates").join(download_name(&version))).is_ok();
+    left && !installed_at_login(&version, &preferences::read(app, ATTEMPTS).unwrap_or_default())
+}
+
+fn installed_at_login(version: &str, attempts: &Attempts) -> bool {
+    attempts.version == version && attempts.count > 0
+}
+
+fn download_name(version: &str) -> String {
+    format!("orither-{version}.update")
 }
 
 fn bundle_type() -> Option<BundleType> {
@@ -546,4 +571,18 @@ fn words(err: &UpdateError) -> String {
 
 fn now_millis() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_millis() as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Attempts, installed_at_login};
+
+    #[test]
+    fn a_click_install_is_not_one_at_login() {
+        let counted = |version: &str, count| Attempts { version: version.into(), count };
+        assert!(installed_at_login("0.2.1", &counted("0.2.1", 1)));
+        assert!(!installed_at_login("0.2.1", &counted("0.2.0", 2)));
+        assert!(!installed_at_login("0.2.1", &counted("0.2.1", 0)));
+        assert!(!installed_at_login("0.2.1", &Attempts::default()));
+    }
 }
