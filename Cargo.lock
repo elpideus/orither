@@ -4613,6 +4613,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "webkit2gtk",
+ "webview2-com",
+ "windows",
  "xkeysym",
 ]
 

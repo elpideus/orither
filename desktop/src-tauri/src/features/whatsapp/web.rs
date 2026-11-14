@@ -13,18 +13,17 @@ use std::{
     collections::VecDeque,
     f64::consts::{FRAC_PI_2, PI},
     iter,
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
     time::Duration,
 };
 
 use anyhow::{Context, Result, bail};
 use gtk::{gdk, glib, prelude::*};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tauri::{AppHandle, Listener, Manager, Url};
 use tauri_plugin_opener::OpenerExt;
-use tokio::sync::oneshot;
 use webkit2gtk::{
     ContextMenuAction, ContextMenuExt, ContextMenuItemExt, CookieAcceptPolicy, CookieManagerExt,
     CookiePersistentStorage, DeviceInfoPermissionRequest, Download, DownloadError, DownloadExt, LoadEvent,
@@ -36,26 +35,22 @@ use webkit2gtk::{
     WebProcessTerminationReason, WebView, WebViewExt, WebsiteDataManager, WebsiteDataManagerExt,
 };
 
-use super::{Chat, look};
+use super::{
+    Chat,
+    common::{
+        FOLDER, HOME, HOST, OUTSIDE, QUIET_KEPT, START_AFTER, State, Status, free_name, is_about, on_main, phone_number,
+        reveal, unread,
+    },
+    look,
+};
 use crate::{
     features::{Phone, notifications},
     theme,
 };
 
-const HOME: &str = "https://web.whatsapp.com/";
-const HOST: &str = "web.whatsapp.com";
 /// Where Orither's style sheet applies.
 const STYLED: &str = "https://web.whatsapp.com/*";
-/// Under the app's data and cache folders.
-const FOLDER: &str = "whatsapp-web";
-/// Once linked, WhatsApp Web starts with Orither, to hear of new messages. It
-/// waits a little, as the window comes first.
-const START_AFTER: Duration = Duration::from_secs(8);
-/// How many of WhatsApp Web's notifications are kept from the screen at most.
-const QUIET_KEPT: usize = 32;
 const FADE_IN: Duration = Duration::from_millis(160);
-/// What a link leaving WhatsApp may open on this computer.
-const OUTSIDE: [&str; 4] = ["https", "http", "mailto", "tel"];
 /// What the context menu leaves out: there are no other windows, and no history.
 const LEFT_OUT: [ContextMenuAction; 9] = [
     ContextMenuAction::OpenLink,
@@ -68,28 +63,6 @@ const LEFT_OUT: [ContextMenuAction; 9] = [
     ContextMenuAction::GoForward,
     ContextMenuAction::Stop,
 ];
-
-#[derive(Clone, Copy, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum State {
-    /// Not started since Orither did.
-    Off,
-    Opening,
-    Open,
-    Failed,
-}
-
-#[derive(Clone, PartialEq, Serialize)]
-struct Status {
-    state: State,
-    /// What WhatsApp Web's title counts.
-    unread: u32,
-    error: Option<String>,
-}
-
-impl Status {
-    const OFF: Self = Self { state: State::Off, unread: 0, error: None };
-}
 
 /// Where the page keeps room for the view, in the window's pixels.
 #[derive(Deserialize)]
@@ -517,11 +490,9 @@ impl Web {
     /// The latest of WhatsApp Web's notifications from this chat.
     fn take_quiet(&self, chat: &Chat) -> Option<Notification> {
         let mut quiet = self.quiet.borrow_mut();
-        let user = chat.id.as_deref().map(user).filter(|user| !user.is_empty());
-        let found = quiet.iter().rposition(|notification| {
-            let by_tag = notification.tag().is_some_and(|tag| Some(self::user(&tag)) == user);
-            by_tag || notification.title().is_some_and(|title| same_chat(&chat.title, &title))
-        })?;
+        let found = quiet
+            .iter()
+            .rposition(|notification| is_about(chat, notification.tag().as_deref(), notification.title().as_deref()))?;
         quiet.remove(found)
     }
 }
@@ -591,53 +562,6 @@ fn save(phone: &Phone, download: &Download) {
     });
 }
 
-/// A name in the folder that nothing has yet, as in "photo (2).jpg".
-fn free_name(folder: &Path, suggested: &str) -> PathBuf {
-    let name = Path::new(suggested).file_name().map_or_else(|| "Download".into(), ToOwned::to_owned);
-    let path = folder.join(&name);
-    if !path.exists() {
-        return path;
-    }
-    let name = Path::new(&name);
-    let stem = name.file_stem().unwrap_or_default().to_string_lossy();
-    let extension = name.extension().map(|extension| format!(".{}", extension.to_string_lossy())).unwrap_or_default();
-    (2..).map(|n| folder.join(format!("{stem} ({n}){extension}"))).find(|path| !path.exists()).expect("a free name")
-}
-
-/// What WhatsApp Web's title counts, as in "(3) WhatsApp".
-fn unread(title: &str) -> u32 {
-    let count = title.strip_prefix('(').and_then(|rest| rest.split_once(')'));
-    count.and_then(|(count, _)| count.parse().ok()).unwrap_or(0)
-}
-
-/// The user part of a WhatsApp id, as in "391234567@s.whatsapp.net".
-fn user(id: &str) -> &str {
-    id.split(['@', ':']).next().unwrap_or_default()
-}
-
-/// The phone number a chat's id holds, if it is one.
-fn phone_number(id: &str) -> Option<&str> {
-    let (number, server) = id.split_once('@')?;
-    let digits = !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit());
-    (server == "s.whatsapp.net" && digits).then_some(number)
-}
-
-/// A chat's title, without the count the phone may add, as in "Ana (2 messages)".
-fn uncounted(title: &str) -> String {
-    let title = title.trim();
-    let counted = title.strip_suffix(')').and_then(|rest| rest.rsplit_once(" ("));
-    let counted = counted.filter(|(_, count)| count.starts_with(|c: char| c.is_ascii_digit()));
-    counted.map_or(title, |(title, _)| title).trim().to_lowercase()
-}
-
-/// Whether a title on the phone and one on WhatsApp Web name the same chat. A
-/// group's on the phone may add its sender, as in "Family: Ana".
-fn same_chat(phone: &str, web: &str) -> bool {
-    let web = uncounted(web);
-    let group = phone.split_once(": ").map(|(group, _)| group);
-    !web.is_empty() && iter::once(phone).chain(group).any(|title| uncounted(title) == web)
-}
-
 /// Opens this chat in WhatsApp Web: through its own notification, as a click
 /// on it would, or else by its number, which loads WhatsApp Web again.
 pub fn open(phone: &Phone, chat: Chat) {
@@ -689,69 +613,4 @@ fn place_at(phone: &Phone, place: Option<Place>) -> Result<()> {
     web.place.replace(place);
     web.show_if_ready();
     Ok(())
-}
-
-/// Shows a download in the file manager. Only those in Downloads, which is
-/// where WhatsApp Web saves.
-fn reveal(phone: &Phone, body: &Value) -> Result<Value> {
-    let path = Path::new(body["path"].as_str().context("which download?")?).canonicalize()?;
-    if !path.starts_with(phone.app.path().download_dir()?.canonicalize()?) {
-        bail!("{} is not a download", path.display());
-    }
-    phone.app.opener().reveal_item_in_dir(&path)?;
-    Ok(Value::Null)
-}
-
-/// Runs `work` on the main thread, where GTK lives, and hands back its answer.
-fn on_main<T: Send + 'static>(
-    phone: &Phone,
-    work: impl FnOnce(&Phone) -> Result<T> + Send + 'static,
-) -> Result<oneshot::Receiver<Result<T>>> {
-    let (done, answer) = oneshot::channel();
-    let there = phone.clone();
-    phone.app.run_on_main_thread(move || {
-        let _ = done.send(work(&there));
-    })?;
-    Ok(answer)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn counts_what_the_title_counts() {
-        assert_eq!(unread("(12) WhatsApp"), 12);
-        assert_eq!(unread("WhatsApp"), 0);
-        assert_eq!(unread("(WhatsApp)"), 0);
-    }
-
-    #[test]
-    fn finds_a_number_in_a_chat_id() {
-        assert_eq!(phone_number("391234567@s.whatsapp.net"), Some("391234567"));
-        assert_eq!(phone_number("1203630@g.us"), None);
-        assert_eq!(phone_number("@s.whatsapp.net"), None);
-        assert_eq!(user("391234567:12@s.whatsapp.net"), "391234567");
-    }
-
-    #[test]
-    fn matches_titles_across_devices() {
-        assert!(same_chat("Ana (2 messages)", "Ana"));
-        assert!(same_chat("Family (3 messages): Ana", "family"));
-        assert!(same_chat("Team (Work)", "Team (Work)"));
-        assert!(!same_chat("Ana", "Anabel"));
-        assert!(!same_chat("Ana", ""));
-    }
-
-    #[test]
-    fn picks_a_name_nothing_has() {
-        let folder = std::env::temp_dir().join(format!("orither-names-{}", std::process::id()));
-        std::fs::create_dir_all(&folder).unwrap();
-        assert_eq!(free_name(&folder, "photo.jpg"), folder.join("photo.jpg"));
-        std::fs::write(folder.join("photo.jpg"), b"").unwrap();
-        std::fs::write(folder.join("photo (2).jpg"), b"").unwrap();
-        assert_eq!(free_name(&folder, "photo.jpg"), folder.join("photo (3).jpg"));
-        assert_eq!(free_name(&folder, "../notes"), folder.join("notes"));
-        std::fs::remove_dir_all(folder).unwrap();
-    }
 }

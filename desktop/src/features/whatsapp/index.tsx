@@ -105,7 +105,7 @@ function Page() {
     return (
       <section className="pane whatsapp-page">
         <Empty icon={MessageCircle} title="Not on this computer yet">
-          <p>WhatsApp Web is built into Orither on Linux for now. New chats still show on the home page.</p>
+          <p>WhatsApp Web is built into Orither on Linux and Windows for now. New chats still show on the home page.</p>
         </Empty>
       </section>
     );
