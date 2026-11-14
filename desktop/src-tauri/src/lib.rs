@@ -72,6 +72,8 @@ fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
+    #[cfg(windows)]
+    own_app_id();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| match requested_app(&args) {
@@ -143,6 +145,18 @@ fn quit_on_terminate(app: AppHandle) {
             app.exit(0);
         }
     });
+}
+
+/// Windows gives a program the app id of the shortcut that started it. Started from a phone app's
+/// shortcut, Orither would take that app's taskbar button and name, so it states its own: the one
+/// its installer's shortcut and its notifications use.
+#[cfg(windows)]
+fn own_app_id() {
+    use windows::{Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID, core::HSTRING};
+
+    if let Err(err) = unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from("dev.orither.desktop")) } {
+        tracing::warn!("setting Orither's app id: {err}");
+    }
 }
 
 pub(crate) fn show_window(app: &tauri::AppHandle) {
