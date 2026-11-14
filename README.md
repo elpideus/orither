@@ -245,7 +245,7 @@ pnpm test
 ```
 
 ```bash
-node --test scripts/
+node --test "scripts/*.test.mjs"
 ```
 
 ## Releasing

@@ -1,4 +1,4 @@
-// The release scripts' rules: node --test scripts/
+// The release scripts' rules: node --test "scripts/*.test.mjs"
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
