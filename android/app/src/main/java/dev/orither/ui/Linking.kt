@@ -62,12 +62,17 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import dev.orither.R
 import dev.orither.link.Link
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 private const val CODE_LENGTH = 8
 private const val CODE_GROUP = 4
 private const val SHAKE_PIXELS = 18f
 private const val SHAKE_MILLIS = 360
+/** A code that leads nowhere, or a computer that went away, must not leave the phone waiting for ever. */
+private const val JOIN_WITHIN_MS = 45_000L
 
 private sealed interface Stage {
     data object Choosing : Stage
@@ -82,13 +87,17 @@ internal fun Linking(deepLink: String?, onLinked: () -> Unit, onCancel: (() -> U
     var stage by remember { mutableStateOf<Stage>(Stage.Choosing) }
     var failed by remember { mutableStateOf(false) }
     val shake = remember { Animatable(0f) }
+    var joining by remember { mutableStateOf<Job?>(null) }
 
     val join: (String) -> Unit = { token ->
         if (stage != Stage.Joining) {
             stage = Stage.Joining
             failed = false
-            scope.launch {
-                if (runCatching { Link.join(token) }.isFailure) {
+            joining = scope.launch {
+                val linked = runCatching { withTimeout(JOIN_WITHIN_MS) { Link.join(token) } }
+                // Cancelled from the Cancel button: back to choosing, without calling it a failure.
+                if (!isActive) return@launch
+                if (linked.isFailure) {
                     stage = Stage.Choosing
                     failed = true
                     shake.animateTo(
@@ -139,7 +148,10 @@ internal fun Linking(deepLink: String?, onLinked: () -> Unit, onCancel: (() -> U
             label = "stage",
         ) { current ->
             when (current) {
-                Stage.Joining -> Joining()
+                Stage.Joining -> Joining {
+                    joining?.cancel()
+                    stage = Stage.Choosing
+                }
                 Stage.Scanning -> ScanTile(join) { stage = Stage.Choosing }
                 Stage.Choosing -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     ScanPrompt { stage = Stage.Scanning }
@@ -154,11 +166,12 @@ internal fun Linking(deepLink: String?, onLinked: () -> Unit, onCancel: (() -> U
 }
 
 @Composable
-private fun Joining() {
+private fun Joining(stop: () -> Unit) {
     Tile(Modifier.fillMaxWidth()) {
         Row(Modifier.padding(20.dp), Arrangement.spacedBy(14.dp), Alignment.CenterVertically) {
             Orbit(28.dp, alive = true)
-            Text(stringResource(R.string.linking), color = Palette.Text, fontSize = 16.sp)
+            Text(stringResource(R.string.linking), color = Palette.Text, fontSize = 16.sp, modifier = Modifier.weight(1f))
+            Quiet(stringResource(R.string.cancel), onClick = stop)
         }
     }
 }
