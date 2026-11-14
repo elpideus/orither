@@ -12,3 +12,6 @@ png = "0.18"
 pollster = "0.4"
 wgpu = "30"
 winit = "0.30"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell"] }

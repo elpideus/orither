@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::Input;
 use crate::features::Phone;
 
-const UNSUPPORTED: &str = "Only Linux computers can be controlled from the phone so far.";
+const UNSUPPORTED: &str = "Only Linux and Windows computers can be controlled from the phone so far.";
 
 pub struct Remote;
 

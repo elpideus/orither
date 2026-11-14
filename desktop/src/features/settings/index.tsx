@@ -38,10 +38,13 @@ function PhoneNotifications() {
   );
 }
 
+/** `asks` is false where the computer lets the phone in without asking, as Windows does. */
+type RemoteState = { supported: boolean; active: boolean; asks?: boolean };
+
 function RemoteControl() {
-  const [state, setState] = useState<{ supported: boolean; active: boolean }>();
-  useEffect(() => void call<{ supported: boolean; active: boolean }>("input", "state").then(setState, () => {}), []);
-  useNotice<{ supported: boolean; active: boolean }>("input", "state", setState, { everyPhone: true });
+  const [state, setState] = useState<RemoteState>();
+  useEffect(() => void call<RemoteState>("input", "state").then(setState, () => {}), []);
+  useNotice<RemoteState>("input", "state", setState, { everyPhone: true });
   if (!state) return null;
   return (
     <div className="option">
@@ -52,7 +55,9 @@ function RemoteControl() {
           ? "This desktop doesn't let other programs control it yet."
           : state.active
             ? "A phone is controlling this computer now."
-            : "Open Trackpad in Orither on the phone. This computer asks once whether to allow it."}
+            : state.asks === false
+              ? "Open Trackpad in Orither on the phone. Programs run as administrator ignore it."
+              : "Open Trackpad in Orither on the phone. This computer asks once whether to allow it."}
       </p>
       <span className="settings-state" data-on={state.active}>
         {state.active ? "In use" : "Ready"}

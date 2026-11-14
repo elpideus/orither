@@ -1,15 +1,24 @@
 //! Lets a phone be this computer's trackpad and keyboard. The phone sends what its
 //! fingers and keyboard do as notices, and [`platform`] turns them into the
-//! computer's own input. The desktop asks the user before anything controls it, so
-//! the phone first calls `open`, which says what the user still has to do.
+//! computer's own input. A Linux desktop asks the user before anything controls it,
+//! so the phone first calls `open`, which says what the user still has to do.
 
 #[cfg(target_os = "linux")]
 #[path = "input/linux.rs"]
 mod platform;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(windows)]
+#[path = "input/windows.rs"]
+mod platform;
+
+#[cfg(not(any(target_os = "linux", windows)))]
 #[path = "input/unsupported.rs"]
 mod platform;
+
+/// Windows' names for keys, apart from the Windows module so that they are tested everywhere.
+#[cfg(any(windows, test))]
+#[path = "input/windows_keys.rs"]
+mod windows_keys;
 
 use std::sync::Arc;
 

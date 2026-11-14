@@ -138,7 +138,14 @@ impl Viewer {
         let size = if self.options.flex { FLEX_START_SIZE } else { START_SIZE };
         let mut attributes = Window::default_attributes().with_title(&self.options.title).with_inner_size(size);
         if let Some(icon) = &self.options.icon {
-            attributes = attributes.with_window_icon(load_icon(icon).ok());
+            let icon = load_icon(icon).ok();
+            // Windows shows the big icon in Alt+Tab, where the small one would be blurred up to size.
+            #[cfg(windows)]
+            {
+                use winit::platform::windows::WindowAttributesExtWindows;
+                attributes = attributes.with_taskbar_icon(icon.clone());
+            }
+            attributes = attributes.with_window_icon(icon);
         }
         #[cfg(target_os = "linux")]
         {
@@ -254,6 +261,8 @@ impl ApplicationHandler<Wake> for Viewer {
 
 /// Shows the video from stdin until it ends or the user closes the window.
 pub fn run(options: Options) -> Result<()> {
+    #[cfg(windows)]
+    take_app_id(&options);
     let event_loop = EventLoop::<Wake>::with_user_event().build().context("reaching the display")?;
     let wake = event_loop.create_proxy();
     let latest = Latest::default();
@@ -280,6 +289,27 @@ pub fn run(options: Options) -> Result<()> {
     };
     event_loop.run_app(&mut viewer).context("running the window")?;
     viewer.failure.map_or(Ok(()), Err)
+}
+
+/// Windows groups windows on the taskbar by their process's app id, the way Linux
+/// desktops go by `app_id`. An app's window takes the id of the Start-menu shortcut
+/// Orither wrote for it, so it gets a button of its own with the shortcut's name and
+/// icon, which pins as that shortcut. Only an app has an icon, and a shortcut: the
+/// phone's mirror keeps Orither's id, and so Orither's button. This has to happen
+/// before the first window opens.
+#[cfg(windows)]
+fn take_app_id(options: &Options) {
+    use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+
+    if options.icon.is_none() || options.app_id.is_empty() {
+        return;
+    }
+    let id: Vec<u16> = options.app_id.encode_utf16().chain([0]).collect();
+    // SAFETY: `id` ends with a zero and outlives the call, which copies it.
+    let result = unsafe { SetCurrentProcessExplicitAppUserModelID(id.as_ptr()) };
+    if result < 0 {
+        eprintln!("taking the app id {}: error {result:#010x}", options.app_id);
+    }
 }
 
 #[cfg(test)]
