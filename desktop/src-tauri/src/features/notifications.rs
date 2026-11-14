@@ -6,15 +6,15 @@
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet, VecDeque},
     io::Cursor,
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
@@ -39,6 +39,10 @@ const ENABLED: &str = "notifications-enabled";
 const MAX_PICTURE: u64 = 1024 * 1024;
 /// How long Orither waits, as it quits, for its notifications to go.
 const CLOSED_WITHIN: Duration = Duration::from_secs(1);
+/// How many notifications may pop up within [`BURST`]. Those past it, as when the phone
+/// comes back with many at once, are listed without popping up, as quiet ones are.
+const POPUPS: usize = 3;
+const BURST: Duration = Duration::from_secs(10);
 
 /// A notification as the phone describes it.
 #[derive(Deserialize)]
@@ -118,18 +122,101 @@ enum Change {
     Connected,
 }
 
+/// What a notification says, as this computer shows it.
+#[derive(PartialEq)]
+struct Words {
+    label: String,
+    title: String,
+    text: String,
+    picture: bool,
+}
+
+impl Words {
+    fn of(shown: &Shown) -> Self {
+        Self { label: shown.label.clone(), title: shown.title.clone(), text: shown.text.clone(), picture: shown.picture }
+    }
+}
+
+/// How a notification the phone posted shows here.
+#[derive(Debug, PartialEq)]
+enum Heed {
+    /// As the phone asks.
+    Show,
+    /// Without popping up, as too many popped up just now.
+    Hush,
+    /// Not at all, as it says what it said already.
+    Skip,
+}
+
+/// What the phone's notifications said here, so that each pops up once. Apps post theirs
+/// again unchanged, many at once as the phone comes back online, and the phone passes each
+/// on as it comes, calling for attention unless the app asked to alert only once.
+#[derive(Default)]
+struct Memory {
+    said: HashMap<String, Words>,
+    /// The notifications that popped up lately, and when.
+    popped: VecDeque<(Instant, String)>,
+}
+
+impl Memory {
+    /// How to show a notification the phone posted, which it remembers.
+    fn heed(&mut self, shown: &Shown, now: Instant) -> Heed {
+        let words = Words::of(shown);
+        if self.said.get(&shown.key) == Some(&words) {
+            return Heed::Skip;
+        }
+        self.said.insert(shown.key.clone(), words);
+        if !shown.alert || shown.quiet {
+            return Heed::Show;
+        }
+        self.popped.retain(|(at, _)| now.saturating_duration_since(*at) < BURST);
+        // One that changes as it shows, as a chat does with each new line, takes no more room.
+        if self.popped.iter().any(|(_, key)| *key == shown.key) {
+            return Heed::Show;
+        }
+        if self.popped.len() >= POPUPS {
+            return Heed::Hush;
+        }
+        self.popped.push_back((now, shown.key.clone()));
+        Heed::Show
+    }
+
+    /// Takes in what the phone has as it connects: what shows here already, and what came
+    /// meanwhile, which it is late to call attention to.
+    fn connected(&mut self, keys: &HashSet<String>, listed: &[Shown]) {
+        self.said.retain(|key, _| keys.contains(key));
+        self.said.extend(listed.iter().map(|shown| (shown.key.clone(), Words::of(shown))));
+    }
+
+    fn removed(&mut self, key: &str) {
+        self.said.remove(key);
+    }
+}
+
 struct Shared {
     phone: Phone,
     enabled: AtomicBool,
     shade: shade::Shade,
+    memory: Mutex<Memory>,
 }
 
 impl Shared {
-    async fn posted(&self, peer: PeerId, shown: Shown) -> Result<()> {
+    fn memory(&self) -> MutexGuard<'_, Memory> {
+        self.memory.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    async fn posted(&self, peer: PeerId, mut shown: Shown) -> Result<()> {
         if !self.enabled.load(Ordering::Relaxed) {
             return Ok(());
         }
         let session = self.phone.node.session(&peer).context("your phone is not connected")?;
+        // Before fetching anything, as the same one can come many times a second.
+        let heed = self.memory().heed(&shown, Instant::now());
+        match heed {
+            Heed::Skip => return Ok(()),
+            Heed::Hush => shown.quiet = true,
+            Heed::Show => {}
+        }
         let phone = self.phone.node.peers().into_iter().find(|status| status.peer.id == peer);
         let origin = phone.map_or_else(|| "Your phone".into(), |status| status.peer.device.name);
         let icon = screen::app_icon(&self.phone, &session, &shown.app).await;
@@ -158,11 +245,14 @@ impl Shared {
     }
 
     /// Closes those that went from the phone while it was away. Any that came
-    /// meanwhile stay on the phone, as it is late to call attention to them.
+    /// meanwhile stay on the phone, as it is late to call attention to them, and
+    /// so do they when their apps post them again as the phone comes back online.
     async fn connected(&self) -> Result<()> {
         let listed = self.phone.session()?.call("notifications", "list", Value::Null).await?;
         let listed = listed.as_array().map(Vec::as_slice).unwrap_or_default();
-        let keys = listed.iter().filter_map(|shown| shown["key"].as_str()).map(str::to_owned).collect();
+        let keys: HashSet<String> = listed.iter().filter_map(|shown| shown["key"].as_str()).map(str::to_owned).collect();
+        let known: Vec<Shown> = listed.iter().filter_map(|shown| Shown::deserialize(shown).ok()).collect();
+        self.memory().connected(&keys, &known);
         self.shade.order(Order::Keep(keys));
         Ok(())
     }
@@ -179,6 +269,7 @@ async fn follow(shared: Arc<Shared>, mut changes: UnboundedReceiver<Change>) {
         let done = match change {
             Change::Posted(peer, shown) => shared.posted(peer, shown).await,
             Change::Removed(key) => {
+                shared.memory().removed(&key);
                 shared.shade.order(Order::Close(key));
                 Ok(())
             }
@@ -232,7 +323,7 @@ impl Notifications {
         let (changed, changes) = unbounded_channel();
         let enabled = preferences::read(&phone.app, ENABLED).unwrap_or(true);
         let shade = shade::Shade::start(&phone, answered);
-        let shared = Arc::new(Shared { phone, enabled: AtomicBool::new(enabled), shade });
+        let shared = Arc::new(Shared { phone, enabled: AtomicBool::new(enabled), shade, memory: Mutex::default() });
         async_runtime::spawn(follow(shared.clone(), changes));
         async_runtime::spawn(answer(shared.clone(), screen.clone(), answers));
         Arc::new(Self { shared, changes: changed, screen })
@@ -592,5 +683,75 @@ mod tests {
         assert_eq!(&picture.data[..4], &[200, 200, 200, 255]);
         assert_eq!(picture.data.len(), 2 * 3 * 4);
         assert!(pixels(b"not a picture").is_none());
+    }
+
+    fn shown(key: &str, text: &str) -> Shown {
+        Shown {
+            key: key.into(),
+            app: "com.example".into(),
+            label: "Example".into(),
+            title: "Ada".into(),
+            text: text.into(),
+            alert: true,
+            quiet: false,
+            picture: false,
+            conversation: None,
+        }
+    }
+
+    #[test]
+    fn a_notification_posted_again_unchanged_shows_once() {
+        let (mut memory, now) = (Memory::default(), Instant::now());
+        assert_eq!(memory.heed(&shown("a", "Hi"), now), Heed::Show);
+        assert_eq!(memory.heed(&shown("a", "Hi"), now), Heed::Skip);
+        assert_eq!(memory.heed(&shown("a", "Hi"), now + BURST * 6), Heed::Skip);
+        assert_eq!(memory.heed(&shown("a", "Hi\nAre you there?"), now), Heed::Show);
+        assert_eq!(memory.heed(&shown("a", "Hi\nAre you there?"), now), Heed::Skip);
+        let pictured = Shown { picture: true, ..shown("a", "Hi\nAre you there?") };
+        assert_eq!(memory.heed(&pictured, now), Heed::Show);
+    }
+
+    #[test]
+    fn one_removed_from_the_phone_shows_again_when_posted_again() {
+        let (mut memory, now) = (Memory::default(), Instant::now());
+        assert_eq!(memory.heed(&shown("a", "Hi"), now), Heed::Show);
+        memory.removed("a");
+        assert_eq!(memory.heed(&shown("a", "Hi"), now + BURST), Heed::Show);
+    }
+
+    #[test]
+    fn a_burst_pops_up_only_the_first_few() {
+        let (mut memory, now) = (Memory::default(), Instant::now());
+        let heeded: Vec<Heed> = (0..6).map(|n| memory.heed(&shown(&n.to_string(), "Hi"), now)).collect();
+        assert_eq!(heeded, [Heed::Show, Heed::Show, Heed::Show, Heed::Hush, Heed::Hush, Heed::Hush]);
+        // One that popped up still shows its changes, without taking more room.
+        assert_eq!(memory.heed(&shown("0", "Hi again"), now), Heed::Show);
+        assert_eq!(memory.heed(&shown("6", "Hi"), now + BURST / 2), Heed::Hush);
+        assert_eq!(memory.heed(&shown("7", "Hi"), now + BURST), Heed::Show);
+    }
+
+    #[test]
+    fn quiet_ones_and_updates_that_ask_for_no_attention_take_no_room() {
+        let (mut memory, now) = (Memory::default(), Instant::now());
+        for n in 0..5 {
+            assert_eq!(memory.heed(&Shown { quiet: true, ..shown(&format!("quiet {n}"), "Hi") }, now), Heed::Show);
+            assert_eq!(memory.heed(&Shown { alert: false, ..shown(&format!("update {n}"), "Hi") }, now), Heed::Show);
+        }
+        assert_eq!(memory.heed(&shown("loud", "Hi"), now), Heed::Show);
+    }
+
+    #[test]
+    fn what_the_phone_has_as_it_reconnects_does_not_pop_up_again() {
+        let (mut memory, now) = (Memory::default(), Instant::now());
+        memory.heed(&shown("shown", "Hi"), now);
+        memory.heed(&shown("gone", "Hi"), now);
+        let listed = [shown("shown", "Hi"), shown("came meanwhile", "Hello")];
+        let keys = listed.iter().map(|shown| shown.key.clone()).chain(["odd".into()]).collect();
+        memory.connected(&keys, &listed);
+        let later = now + BURST;
+        assert_eq!(memory.heed(&shown("shown", "Hi"), later), Heed::Skip);
+        assert_eq!(memory.heed(&shown("came meanwhile", "Hello"), later), Heed::Skip);
+        assert_eq!(memory.heed(&shown("came meanwhile", "Hello\nAnyone?"), later), Heed::Show);
+        assert_eq!(memory.heed(&shown("gone", "Hi"), later), Heed::Show);
     }
 }
