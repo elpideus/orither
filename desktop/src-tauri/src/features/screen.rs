@@ -392,9 +392,9 @@ impl Screen {
     /// that shows it in the taskbar and the launcher as if it were installed.
     async fn identity(&self, session: &Session, package: &str, label: &str) -> Result<PathBuf> {
         let icon = app_icon(&self.phone, session, package).await?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", windows))]
         write_entry(package, label, &icon)?;
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", windows)))]
         let _ = label;
         Ok(icon)
     }
@@ -419,6 +419,16 @@ fn write_entry(package: &str, label: &str, icon: &Path) -> Result<()> {
     );
     fs::write(folder.join(format!("{id}.desktop")), entry)?;
     Ok(())
+}
+
+#[cfg(any(windows, test))]
+mod shortcut;
+
+/// Puts the app in the Start menu, under the id its window takes, which gives the
+/// window the shortcut's name and icon in the taskbar.
+#[cfg(windows)]
+fn write_entry(package: &str, label: &str, icon: &Path) -> Result<()> {
+    shortcut::write(package, label, icon)
 }
 
 /// Opens an app from outside, as its launcher entry does.

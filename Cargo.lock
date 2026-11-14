@@ -4613,6 +4613,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "webkit2gtk",
+ "windows",
  "windows-sys 0.61.2",
  "winreg",
  "xkeysym",
@@ -4664,6 +4665,7 @@ dependencies = [
  "png",
  "pollster",
  "wgpu",
+ "windows-sys 0.61.2",
  "winit",
 ]
 
