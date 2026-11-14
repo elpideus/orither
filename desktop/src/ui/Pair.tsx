@@ -84,7 +84,7 @@ export function Pair({ onClose }: { onClose?: () => void }) {
       <section className="pair-words">
         <Orrery phones={joined ? [joined] : []} focused={joined?.id} size={168} waiting={!joined} />
         <h1>{joined ? `${joined.device.name} is linked.` : phones.length ? "Link another phone." : "Your phone, on this computer."}</h1>
-        <UsbSetup />
+        <UsbSetup invite={current?.uri} />
         <p className="pair-or dim">Or, with Orither already on the phone:</p>
         <ol>
           {STEPS.map((step, index) => (
@@ -94,7 +94,6 @@ export function Pair({ onClose }: { onClose?: () => void }) {
             </li>
           ))}
         </ol>
-        <p className="dim pair-usb">Some features also need the phone connected by USB once, with USB debugging on. Orither asks when it does.</p>
       </section>
 
       <section className="pair-card">

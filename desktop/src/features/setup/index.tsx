@@ -77,11 +77,11 @@ function useDevices(): { adb: boolean; devices: Device[] } | null {
   return found;
 }
 
-function DeviceRow({ device }: { device: Device }) {
+function DeviceRow({ device, invite }: { device: Device; invite?: string }) {
   const state = useProgress()[device.serial];
   const start = () => {
     record(device.serial, { step: "install" });
-    void call(ID, "start", { serial: device.serial }).catch((error: string) => record(device.serial, { error: String(error) }));
+    void call(ID, "start", { serial: device.serial, invite }).catch((error: string) => record(device.serial, { error: String(error) }));
   };
   let words: string;
   let action = null;
@@ -118,7 +118,7 @@ function DeviceRow({ device }: { device: Device }) {
 }
 
 /** Setting up a phone over a USB cable: Orither installs its app, links it and turns everything on. */
-export function UsbSetup() {
+export function UsbSetup({ invite }: { invite?: string }) {
   useRecording();
   const found = useDevices();
   if (!found || !found.adb) return null;
@@ -141,7 +141,7 @@ export function UsbSetup() {
       ) : (
         <ul className="usb-devices">
           {devices.map((device) => (
-            <DeviceRow key={device.serial} device={device} />
+            <DeviceRow key={device.serial} device={device} invite={invite} />
           ))}
         </ul>
       )}

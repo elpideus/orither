@@ -3,7 +3,8 @@
 //! the phone in. Nothing is installed from a file on the phone, which is what Android's restricted
 //! settings and Play Protect's checks on downloaded apps are about.
 //!
-//! The UI lists the phones adb sees with `setup.devices` and starts with `setup.start {serial}`.
+//! The UI lists the phones adb sees with `setup.devices` and starts with `setup.start {serial, invite?}`,
+//! passing the pairing link it shows so that setup does not replace it.
 //! It hears `setup.progress {serial, step}` for each step, then `setup.done {serial, missing}`
 //! with what Android kept off, or `setup.failed {serial, error}`.
 
@@ -69,8 +70,8 @@ impl Setup {
         self.phone.tell_ui(ID, method, body);
     }
 
-    async fn run(self: Arc<Self>, serial: String) {
-        let result = self.set_up(&serial).await;
+    async fn run(self: Arc<Self>, serial: String, invite: Option<String>) {
+        let result = self.set_up(&serial, invite).await;
         self.running.lock().unwrap().remove(&serial);
         match result {
             Ok(missing) => self.tell("done", &serial, json!({ "missing": missing })),
@@ -81,7 +82,8 @@ impl Setup {
         }
     }
 
-    async fn set_up(&self, serial: &str) -> Result<Vec<String>> {
+    /// `invite` is the pairing link the screen shows, which setup uses rather than replace it.
+    async fn set_up(&self, serial: &str, invite: Option<String>) -> Result<Vec<String>> {
         let device = devices().await?.into_iter().find(|device| device.serial == serial).context("The phone is no longer connected.")?;
         if device.state == "unauthorized" {
             bail!("Allow USB debugging on your phone, with Always allow from this computer ticked.");
@@ -98,7 +100,7 @@ impl Setup {
         }
 
         self.tell("progress", serial, json!({ "step": "link" }));
-        let session = self.link(serial, &device.model).await?;
+        let session = self.link(serial, &device.model, invite).await?;
 
         self.tell("progress", serial, json!({ "step": "helper" }));
         helper::ensure_engine(&self.phone, &session).await?;
@@ -161,14 +163,15 @@ impl Setup {
     }
 
     /// Links the phone to this computer through a pairing link opened on it, unless it is linked already.
-    async fn link(&self, serial: &str, model: &str) -> Result<Session> {
+    async fn link(&self, serial: &str, model: &str, invite: Option<String>) -> Result<Session> {
         if let Some(session) = self.linked(model).await {
             return Ok(session);
         }
         let known: HashSet<String> = self.phone.node.peers().into_iter().map(|status| status.peer.id.to_string()).collect();
-        let invite = self.phone.node.invite();
+        let made = invite.is_none();
+        let uri = invite.unwrap_or_else(|| self.phone.node.invite().uri);
         // The link goes through the phone's shell, so it is quoted for it.
-        let open = format!("am start -a android.intent.action.VIEW -d '{}' {PACKAGE}", invite.uri.replace('\'', ""));
+        let open = format!("am start -a android.intent.action.VIEW -d '{}' {PACKAGE}", uri.replace('\'', ""));
         let opened = adb::run(&["-s", serial, "shell", &open]).await?;
         if !opened.status.success() {
             bail!("Could not open Orither on the phone.");
@@ -181,7 +184,9 @@ impl Setup {
             }
             sleep(POLL).await;
         }
-        self.phone.node.cancel_invite();
+        if made {
+            self.phone.node.cancel_invite();
+        }
         bail!("The phone did not link. Make sure it is online, then try again.")
     }
 
@@ -212,8 +217,9 @@ impl Feature for Handle {
             "devices" => devices().await.map(|devices| json!({ "adb": adb::available(), "devices": devices })),
             "start" => {
                 let Some(serial) = body["serial"].as_str().map(str::to_owned) else { return Some(Err(anyhow::anyhow!("start needs a serial"))) };
+                let invite = body["invite"].as_str().map(str::to_owned);
                 if self.0.running.lock().unwrap().insert(serial.clone()) {
-                    async_runtime::spawn(self.0.clone().run(serial));
+                    async_runtime::spawn(self.0.clone().run(serial, invite));
                 }
                 Ok(Value::Null)
             }

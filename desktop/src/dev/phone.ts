@@ -190,6 +190,12 @@ mockIPC(
       case "call": {
         const { feature, method, body } = args;
         if (feature === "updates") return updates(method, body);
+        if (feature === "setup" && method === "devices") {
+          const wanted = params.get("usb");
+          if (wanted === null) return { adb: true, devices: [] };
+          const state = wanted === "unauthorized" ? "unauthorized" : "ready";
+          return { adb: true, devices: [{ serial: "R5CT1234", model: "Galaxy S24", state, app: wanted === "installed" ? "0.1.1" : null }] };
+        }
         if (feature === "gallery" && method === "items") return gallery(body.offset as number, body.limit as number);
         if (feature === "notifications" && method === "list") return notifications[phone] ?? [];
         if (feature === "calls" && method === "list") return { calls: calls[phone] ?? [] };
