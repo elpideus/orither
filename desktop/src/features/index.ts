@@ -8,9 +8,10 @@ import { helper } from "./helper";
 import { input } from "./input";
 import { messages } from "./messages";
 import { settings } from "./settings";
+import { setupFeature } from "./setup";
 import { transfers } from "./transfers";
 import { updatesFeature } from "./updates";
 import { whatsapp } from "./whatsapp";
 
 /** Every feature. Those with tabs appear in this order, after Home, which is ordered by use. */
-export const features: Feature[] = [whatsapp, calls, clipboard, gallery, messages, files, apps, settings, transfers, helper, input, updatesFeature];
+export const features: Feature[] = [whatsapp, calls, clipboard, gallery, messages, files, apps, settings, transfers, helper, input, updatesFeature, setupFeature];

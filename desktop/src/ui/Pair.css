@@ -58,6 +58,11 @@
   font-weight: 600;
 }
 
+.pair-or {
+  margin-bottom: -8px;
+  font-size: 13px;
+}
+
 .pair-usb {
   max-width: 48ch;
   font-size: 13px;

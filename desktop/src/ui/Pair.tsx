@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 
 import { cancelInvite, invite, usePeers, type Invite } from "../core/link";
+import { UsbSetup } from "../features/setup";
 import { ease } from "../core/motion";
 import { IconButton } from "./kit";
 import { Orrery } from "./Orrery";
@@ -83,6 +84,8 @@ export function Pair({ onClose }: { onClose?: () => void }) {
       <section className="pair-words">
         <Orrery phones={joined ? [joined] : []} focused={joined?.id} size={168} waiting={!joined} />
         <h1>{joined ? `${joined.device.name} is linked.` : phones.length ? "Link another phone." : "Your phone, on this computer."}</h1>
+        <UsbSetup />
+        <p className="pair-or dim">Or, with Orither already on the phone:</p>
         <ol>
           {STEPS.map((step, index) => (
             <li key={step}>

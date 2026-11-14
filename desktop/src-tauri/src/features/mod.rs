@@ -9,6 +9,7 @@ mod input;
 mod nearby;
 mod notifications;
 pub mod screen;
+mod setup;
 mod transfer;
 mod updates;
 mod whatsapp;
@@ -140,6 +141,7 @@ impl Features {
             calls::Calls::start(phone.clone()),
             input::RemoteInput::start(phone.clone()),
             Arc::new(updates::Handle(updates::Updates::start(phone.clone()))),
+            Arc::new(setup::Handle(setup::Setup::new(phone.clone()))),
             hardware::Hardware::new(phone),
         ];
         let installed = features.into_iter().map(|feature| (feature.id(), feature)).collect();
