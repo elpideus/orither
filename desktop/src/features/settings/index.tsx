@@ -125,7 +125,7 @@ function Page() {
         </div>
       </section>
       <UpdatesPane />
-      <p className="settings-about dim">{version ? `Orither ${version}, free` : "Free"} and open source under the Apache License 2.0.</p>
+      <p className="settings-about dim">{version ? `Orither ${version}, free` : "Free"} software under the GNU General Public License, version 3 or later.</p>
       <AnimatePresence>
         {linking && (
           <motion.div

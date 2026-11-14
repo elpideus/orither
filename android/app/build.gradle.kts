@@ -69,9 +69,10 @@ val buildRust = tasks.register<Exec>("buildRust") {
     commandLine("cargo", "ndk", "-t", "arm64-v8a", "-o", output, "build", "--release", "-p", "orither-ffi")
 }
 
-// The licences travel with the app.
+// The licences travel with the app: Orither's, and the third-party ones NOTICE points to.
 val copyLegal = tasks.register<Copy>("copyLegal") {
     from(rootDir.resolve("../LICENSE"), rootDir.resolve("../NOTICE"))
+    from(rootDir.resolve("../licenses")) { into("licenses") }
     into(layout.buildDirectory.dir("legal"))
 }
 

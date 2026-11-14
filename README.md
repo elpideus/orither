@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/elpideus/orither/releases/latest"><img src="https://img.shields.io/github/v/release/elpideus/orither?label=release" alt="Latest release"></a>
   <a href="https://github.com/elpideus/orither/actions/workflows/ci.yml"><img src="https://github.com/elpideus/orither/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/elpideus/orither" alt="Apache License 2.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/elpideus/orither" alt="GNU General Public License v3"></a>
 </p>
 
 Your phone, on your computer. Orither is an open source alternative to Phone
@@ -317,8 +317,13 @@ handle passes straight through to the phone.
 
 ## Licence
 
-Orither is licensed under the [Apache License 2.0](LICENSE). It ships the
-scrcpy server and OpenH264, see [NOTICE](NOTICE).
+Orither is free software, licensed under the
+[GNU General Public License, version 3](LICENSE) or (at your option) any later
+version. Version 0.1.0 was released under the Apache License 2.0, and stays
+available under it.
+
+Orither ships the scrcpy server (Apache License 2.0) and OpenH264 (BSD), see
+[NOTICE](NOTICE).
 
 OpenH264 is compiled from source here, so Cisco's patent licence, which covers
 only the binaries Cisco itself publishes, does not extend to these builds. Check

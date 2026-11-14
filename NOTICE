@@ -1,7 +1,12 @@
 Orither
 Copyright 2026 The Orither contributors
 
-Licensed under the Apache License, Version 2.0, see LICENSE.
+Orither is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. It is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See LICENSE for the full licence.
 
 Orither ships the third-party software below inside its apps. Everything else
 it uses is listed in Cargo.lock, desktop/pnpm-lock.yaml and
@@ -15,7 +20,7 @@ https://github.com/Genymobile/scrcpy
   Copyright (C) 2018 Genymobile
   Copyright (C) 2018-2026 Romain Vimont
 
-  Licensed under the Apache License, Version 2.0, see LICENSE.
+  Licensed under the Apache License, Version 2.0, see licenses/Apache-2.0.txt.
 
 
 OpenH264

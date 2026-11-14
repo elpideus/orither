@@ -79,7 +79,7 @@
     "publisher": "The Orither contributors",
     "copyright": "Copyright 2026 The Orither contributors",
     "homepage": "https://github.com/elpideus/orither",
-    "license": "Apache-2.0",
+    "license": "GPL-3.0-or-later",
     "licenseFile": "../../LICENSE",
     "longDescription": "Link an Android phone once, and its messages, photos, files, apps, screen, microphone, speaker and camera are a click away, at home or across the world.",
     "windows": {
