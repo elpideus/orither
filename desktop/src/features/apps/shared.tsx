@@ -1,5 +1,7 @@
+import { TriangleAlert } from "lucide-react";
 import { useSyncExternalStore } from "react";
 
+import { announce } from "../../core/island";
 import { call, focusedId, media, useCall } from "../../core/link";
 import { remember, setting, useSetting } from "../../core/settings";
 
@@ -46,10 +48,16 @@ function used(app: App) {
   recentListeners.forEach((notify) => notify());
 }
 
-/** Opens an app on the phone, or in a window of its own here. */
+/** How long a reason an app did not open stays on screen. */
+const PROBLEM_LASTS = 12_000;
+
+/** Opens an app on the phone, or in a window of its own here, and says so when it cannot. */
 export function launch(app: App, integrated: boolean) {
   used(app);
-  return integrated ? call("screen", "app", { ...app }) : call("apps", "open", { package: app.package });
+  const opening = integrated ? call("screen", "app", { ...app }) : call("apps", "open", { package: app.package });
+  return opening.catch((error: unknown) =>
+    announce({ id: `open-${app.package}`, icon: TriangleAlert, title: `${app.label} did not open`, detail: String(error), tone: "problem", lasts: PROBLEM_LASTS }),
+  );
 }
 
 export function Icon({ app, size }: { app: App; size: number }) {
