@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
@@ -48,7 +49,14 @@ object Link {
 
     fun cancelInvite() = Native.cancelInvite()
 
-    suspend fun join(token: String): Peer = json.decodeFromString(awaiting { Native.join(token, it) })
+    /**
+     * Redeems a pairing code or link. A pairing link can start the app, and arrive before the
+     * service has brought the link online, so it waits for that first.
+     */
+    suspend fun join(token: String): Peer {
+        started.first { it }
+        return json.decodeFromString(awaiting { Native.join(token, it) })
+    }
 
     fun unpair(peer: String) = Native.unpair(peer)
 
