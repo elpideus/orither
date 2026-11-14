@@ -1,9 +1,14 @@
 //! WhatsApp. Its page is WhatsApp Web, see [`web`]. The recent chats on its
 //! tile come from the phone's notifications, and the phone keeps them.
 
+#[cfg(any(target_os = "linux", windows))]
+mod common;
 #[cfg(target_os = "linux")]
 mod look;
 #[cfg(target_os = "linux")]
+mod web;
+#[cfg(windows)]
+#[path = "web_windows.rs"]
 mod web;
 
 use std::sync::Arc;
@@ -72,7 +77,7 @@ impl Feature for WhatsApp {
 }
 
 /// Elsewhere, Orither has no WhatsApp Web of its own yet.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 mod web {
     use anyhow::{Result, bail};
     use serde_json::{Value, json};
@@ -86,7 +91,7 @@ mod web {
     pub async fn command(_phone: &Phone, method: &str, _body: &Value) -> Result<Value> {
         match method {
             "web" => Ok(json!({ "state": "unsupported", "unread": 0 })),
-            _ => bail!("WhatsApp Web is only built in on Linux for now"),
+            _ => bail!("WhatsApp Web is only built in on Linux and Windows for now"),
         }
     }
 }
