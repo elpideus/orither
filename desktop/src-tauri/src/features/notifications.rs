@@ -782,10 +782,12 @@ mod shade {
         fn new(app: HSTRING, pictures: Option<PathBuf>, heard: Sender<Heard>, answers: UnboundedSender<Answer>) -> Result<Self> {
             let notifier = ToastNotificationManager::CreateToastNotifierWithId(&app)?;
             // Toasts from an app id without a Start menu shortcut go nowhere, and nothing says so.
+            // Windows often cannot say for an app from outside the Store ("Element not found")
+            // even when its toasts show, so only a clear no is worth a warning.
             match notifier.Setting() {
                 Ok(NotificationSetting::Enabled) => {}
                 Ok(setting) => tracing::warn!("Windows holds back Orither's notifications: {setting:?}"),
-                Err(err) => tracing::warn!("Windows may not show notifications as {app}: {err}"),
+                Err(err) => tracing::debug!("whether Windows shows notifications as {app}: {err}"),
             }
             let history = ToastNotificationManager::History()?;
             let group = HSTRING::from(GROUP);
