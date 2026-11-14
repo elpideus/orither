@@ -1,8 +1,8 @@
 //! Follows the desktop's colors. KDE keeps them in `kdeglobals`, which is also
 //! what makes the theme apply here the moment it changes in System Settings.
 //! Other Linux desktops state a light or dark preference and an accent through
-//! the XDG portal. Anywhere else the UI keeps its own default: neutrals close
-//! to Breeze Dark, with a green accent.
+//! the XDG portal, and Windows keeps both in the registry. Anywhere else the UI
+//! keeps its own default: neutrals close to Breeze Dark, with a green accent.
 
 use std::{collections::HashMap, fs, path::PathBuf, time::Duration};
 
@@ -37,7 +37,7 @@ pub fn current() -> Theme {
 }
 
 fn read() -> Option<Theme> {
-    read_kde().or_else(read_portal)
+    read_kde().or_else(read_portal).or_else(read_windows)
 }
 
 /// Tells the UI whenever the colors change.
@@ -118,7 +118,36 @@ fn read_portal() -> Option<Theme> {
     None
 }
 
+/// Windows' light or dark setting for apps, and its accent color, from Settings >
+/// Personalization > Colors. Both are in the registry, which is quick enough to read
+/// every time [`watch`] checks.
+#[cfg(windows)]
+fn read_windows() -> Option<Theme> {
+    use winreg::{RegKey, enums::HKEY_CURRENT_USER};
+
+    const PERSONALIZE: &str = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
+    const DWM: &str = r"Software\Microsoft\Windows\DWM";
+    let user = RegKey::predef(HKEY_CURRENT_USER);
+    let value = |path: &str, name: &str| user.open_subkey(path).and_then(|key| key.get_value::<u32, _>(name)).ok();
+    // Windows from before its dark mode has no such value, and was light.
+    let light = value(PERSONALIZE, "AppsUseLightTheme").is_none_or(|light| light != 0);
+    Some(palette(light, value(DWM, "AccentColor").map(abgr_color)))
+}
+
+#[cfg(not(windows))]
+fn read_windows() -> Option<Theme> {
+    None
+}
+
+/// Windows keeps its accent as 0xAABBGGRR.
+#[cfg(any(windows, test))]
+fn abgr_color(value: u32) -> [u8; 3] {
+    let [red, green, blue, _] = value.to_le_bytes();
+    [red, green, blue]
+}
+
 /// Portal colors run from 0 to 1, and anything outside that means none was chosen.
+#[cfg(any(target_os = "linux", test))]
 fn accent_color((red, green, blue): (f64, f64, f64)) -> Option<[u8; 3]> {
     [red, green, blue].iter().all(|part| (0.0..=1.0).contains(part)).then(|| [red, green, blue].map(|part| (part * 255.0).round() as u8))
 }
@@ -151,6 +180,12 @@ mod tests {
     fn a_portal_accent_is_used_only_when_one_was_chosen() {
         assert_eq!(accent_color((1.0, 0.0, 0.2)), Some([255, 0, 51]));
         assert_eq!(accent_color((-1.0, -1.0, -1.0)), None);
+    }
+
+    #[test]
+    fn reads_a_windows_accent() {
+        assert_eq!(abgr_color(0xffd4_7800), [0x00, 0x78, 0xd4]);
+        assert_eq!(palette(true, Some(abgr_color(0xff84_dc3d))).accent, "#3ddc84");
     }
 
     #[test]
