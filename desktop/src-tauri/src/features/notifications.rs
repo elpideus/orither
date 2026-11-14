@@ -2,19 +2,19 @@
 //! app in a window, where the notification leads on the phone, see
 //! [`Screen::notification`], except WhatsApp's, which open in the WhatsApp page.
 //! Closing one here takes it off the phone too.
-// Elsewhere there are no clicks to hear and no pictures to show.
-#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+// On macOS there are no clicks to hear and no pictures to show.
+#![cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet, VecDeque},
     io::Cursor,
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
@@ -39,6 +39,10 @@ const ENABLED: &str = "notifications-enabled";
 const MAX_PICTURE: u64 = 1024 * 1024;
 /// How long Orither waits, as it quits, for its notifications to go.
 const CLOSED_WITHIN: Duration = Duration::from_secs(1);
+/// How many notifications may pop up within [`BURST`]. Those past it, as when the phone
+/// comes back with many at once, are listed without popping up, as quiet ones are.
+const POPUPS: usize = 3;
+const BURST: Duration = Duration::from_secs(10);
 
 /// A notification as the phone describes it.
 #[derive(Deserialize)]
@@ -93,6 +97,41 @@ fn pixels(png: &[u8]) -> Option<Pixels> {
     })
 }
 
+/// A picture as a PNG file holds it, for a desktop that shows pictures from files only.
+#[cfg(any(windows, test))]
+fn png(picture: &Pixels) -> Option<Vec<u8>> {
+    if picture.row != picture.width.checked_mul(4)? {
+        return None;
+    }
+    let mut png = Vec::new();
+    let mut encoder = png::Encoder::new(&mut png, picture.width.try_into().ok()?, picture.height.try_into().ok()?);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().ok()?;
+    writer.write_image_data(&picture.data).ok()?;
+    writer.finish().ok()?;
+    Some(png)
+}
+
+/// What a Windows toast shows of a notification. Its title and text are bound to the
+/// toast's data, so that an update changes them where they show without popping up again.
+/// The logo is the notification's own picture, round as the phone shows a person's, or
+/// else the app's icon.
+#[cfg(any(windows, test))]
+fn toast(logo: Option<(&std::path::Path, bool)>, attribution: &str, silent: bool) -> String {
+    let escape = |text: &str| text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
+    let logo = logo.map_or_else(String::new, |(path, round)| {
+        let crop = if round { r#" hint-crop="circle""# } else { "" };
+        let source = escape(&format!("file:///{}", path.display()));
+        format!(r#"<image placement="appLogoOverride"{crop} src="{source}"/>"#)
+    });
+    let attribution = escape(attribution);
+    let audio = if silent { r#"<audio silent="true"/>"# } else { "" };
+    format!(
+        r#"<toast><visual><binding template="ToastGeneric">{logo}<text>{{title}}</text><text>{{text}}</text><text placement="attribution">{attribution}</text></binding></visual>{audio}</toast>"#
+    )
+}
+
 /// What the desktop's notifications are asked to do.
 enum Order {
     Show(Note),
@@ -118,18 +157,101 @@ enum Change {
     Connected,
 }
 
+/// What a notification says, as this computer shows it.
+#[derive(PartialEq)]
+struct Words {
+    label: String,
+    title: String,
+    text: String,
+    picture: bool,
+}
+
+impl Words {
+    fn of(shown: &Shown) -> Self {
+        Self { label: shown.label.clone(), title: shown.title.clone(), text: shown.text.clone(), picture: shown.picture }
+    }
+}
+
+/// How a notification the phone posted shows here.
+#[derive(Debug, PartialEq)]
+enum Heed {
+    /// As the phone asks.
+    Show,
+    /// Without popping up, as too many popped up just now.
+    Hush,
+    /// Not at all, as it says what it said already.
+    Skip,
+}
+
+/// What the phone's notifications said here, so that each pops up once. Apps post theirs
+/// again unchanged, many at once as the phone comes back online, and the phone passes each
+/// on as it comes, calling for attention unless the app asked to alert only once.
+#[derive(Default)]
+struct Memory {
+    said: HashMap<String, Words>,
+    /// The notifications that popped up lately, and when.
+    popped: VecDeque<(Instant, String)>,
+}
+
+impl Memory {
+    /// How to show a notification the phone posted, which it remembers.
+    fn heed(&mut self, shown: &Shown, now: Instant) -> Heed {
+        let words = Words::of(shown);
+        if self.said.get(&shown.key) == Some(&words) {
+            return Heed::Skip;
+        }
+        self.said.insert(shown.key.clone(), words);
+        if !shown.alert || shown.quiet {
+            return Heed::Show;
+        }
+        self.popped.retain(|(at, _)| now.saturating_duration_since(*at) < BURST);
+        // One that changes as it shows, as a chat does with each new line, takes no more room.
+        if self.popped.iter().any(|(_, key)| *key == shown.key) {
+            return Heed::Show;
+        }
+        if self.popped.len() >= POPUPS {
+            return Heed::Hush;
+        }
+        self.popped.push_back((now, shown.key.clone()));
+        Heed::Show
+    }
+
+    /// Takes in what the phone has as it connects: what shows here already, and what came
+    /// meanwhile, which it is late to call attention to.
+    fn connected(&mut self, keys: &HashSet<String>, listed: &[Shown]) {
+        self.said.retain(|key, _| keys.contains(key));
+        self.said.extend(listed.iter().map(|shown| (shown.key.clone(), Words::of(shown))));
+    }
+
+    fn removed(&mut self, key: &str) {
+        self.said.remove(key);
+    }
+}
+
 struct Shared {
     phone: Phone,
     enabled: AtomicBool,
     shade: shade::Shade,
+    memory: Mutex<Memory>,
 }
 
 impl Shared {
-    async fn posted(&self, peer: PeerId, shown: Shown) -> Result<()> {
+    fn memory(&self) -> MutexGuard<'_, Memory> {
+        self.memory.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    async fn posted(&self, peer: PeerId, mut shown: Shown) -> Result<()> {
         if !self.enabled.load(Ordering::Relaxed) {
             return Ok(());
         }
         let session = self.phone.node.session(&peer).context("your phone is not connected")?;
+        // Before fetching anything, as the same one can come many times a second.
+        let heed = self.memory().heed(&shown, Instant::now());
+        match heed {
+            Heed::Skip => return Ok(()),
+            Heed::Hush => shown.quiet = true,
+            Heed::Show => {}
+        }
         let phone = self.phone.node.peers().into_iter().find(|status| status.peer.id == peer);
         let origin = phone.map_or_else(|| "Your phone".into(), |status| status.peer.device.name);
         let icon = screen::app_icon(&self.phone, &session, &shown.app).await;
@@ -158,11 +280,14 @@ impl Shared {
     }
 
     /// Closes those that went from the phone while it was away. Any that came
-    /// meanwhile stay on the phone, as it is late to call attention to them.
+    /// meanwhile stay on the phone, as it is late to call attention to them, and
+    /// so do they when their apps post them again as the phone comes back online.
     async fn connected(&self) -> Result<()> {
         let listed = self.phone.session()?.call("notifications", "list", Value::Null).await?;
         let listed = listed.as_array().map(Vec::as_slice).unwrap_or_default();
-        let keys = listed.iter().filter_map(|shown| shown["key"].as_str()).map(str::to_owned).collect();
+        let keys: HashSet<String> = listed.iter().filter_map(|shown| shown["key"].as_str()).map(str::to_owned).collect();
+        let known: Vec<Shown> = listed.iter().filter_map(|shown| Shown::deserialize(shown).ok()).collect();
+        self.memory().connected(&keys, &known);
         self.shade.order(Order::Keep(keys));
         Ok(())
     }
@@ -179,6 +304,7 @@ async fn follow(shared: Arc<Shared>, mut changes: UnboundedReceiver<Change>) {
         let done = match change {
             Change::Posted(peer, shown) => shared.posted(peer, shown).await,
             Change::Removed(key) => {
+                shared.memory().removed(&key);
                 shared.shade.order(Order::Close(key));
                 Ok(())
             }
@@ -216,6 +342,8 @@ async fn answer(shared: Arc<Shared>, screen: Screen, mut answers: UnboundedRecei
 }
 
 /// Whether the phone's notifications show here now.
+// WhatsApp Web asks, which is built in on Linux only so far.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn mirrored(phone: &Phone) -> bool {
     phone.session().is_ok() && preferences::read(&phone.app, ENABLED).unwrap_or(true)
 }
@@ -232,7 +360,7 @@ impl Notifications {
         let (changed, changes) = unbounded_channel();
         let enabled = preferences::read(&phone.app, ENABLED).unwrap_or(true);
         let shade = shade::Shade::start(&phone, answered);
-        let shared = Arc::new(Shared { phone, enabled: AtomicBool::new(enabled), shade });
+        let shared = Arc::new(Shared { phone, enabled: AtomicBool::new(enabled), shade, memory: Mutex::default() });
         async_runtime::spawn(follow(shared.clone(), changes));
         async_runtime::spawn(answer(shared.clone(), screen.clone(), answers));
         Arc::new(Self { shared, changes: changed, screen })
@@ -540,8 +668,351 @@ mod shade {
     }
 }
 
-/// Elsewhere they show through Tauri, which hears no clicks.
-#[cfg(not(target_os = "linux"))]
+/// The desktop's own notifications on Windows: toasts under Orither's name, which say when
+/// one is clicked or closed. Windows says so to the running app only, as Orither has no COM
+/// server for toasts, which an app needs for Windows to start it on a click: a click on a
+/// toast left in the Action Center after Orither quits does nothing. Orither takes its
+/// toasts away as it quits, and any a crash left behind as it starts again.
+#[cfg(windows)]
+mod shade {
+    use std::{
+        collections::HashMap,
+        fs,
+        path::{Path, PathBuf},
+        sync::mpsc::{self, Receiver, Sender},
+    };
+
+    use anyhow::Result;
+    use tauri::Manager;
+    use tokio::sync::mpsc::UnboundedSender;
+    use windows::{
+        Data::Xml::Dom::XmlDocument,
+        Foundation::TypedEventHandler,
+        UI::Notifications::{
+            NotificationData, NotificationSetting, NotificationUpdateResult, ToastDismissalReason, ToastDismissedEventArgs,
+            ToastFailedEventArgs, ToastNotification, ToastNotificationHistory, ToastNotificationManager, ToastNotifier,
+        },
+        core::{HSTRING, IInspectable},
+    };
+
+    use super::{Answer, Lead, Note, Order, Phone, Pixels};
+
+    /// The group of the toasts for the phone's notifications, apart from Orither's others.
+    const GROUP: &str = "phone";
+    /// The app id a build that is not installed borrows, as it has no Start menu shortcut
+    /// to carry its own, the way Tauri's notification plugin does. Its toasts show as PowerShell's.
+    const BORROWED: &str = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe";
+
+    pub struct Shade {
+        heard: Sender<Heard>,
+    }
+
+    impl Shade {
+        pub fn start(phone: &Phone, answers: UnboundedSender<Answer>) -> Self {
+            let (heard, hearing) = mpsc::channel();
+            let pictures = phone.app.path().app_cache_dir().ok().map(|folder| folder.join("notifications"));
+            let (app, told) = (app_id(phone), heard.clone());
+            std::thread::spawn(move || match Toasts::new(app, pictures, told, answers) {
+                Ok(toasts) => toasts.run(&hearing),
+                Err(err) => tracing::warn!("no notifications on this desktop: {err:#}"),
+            });
+            Self { heard }
+        }
+
+        pub fn order(&self, order: Order) {
+            let _ = self.heard.send(Heard::Order(Box::new(order)));
+        }
+    }
+
+    /// The app id Orither's installer gives its Start menu shortcut, its bundle identifier.
+    /// Windows shows a toast under the name and icon of the shortcut with the toast's app id.
+    fn app_id(phone: &Phone) -> HSTRING {
+        let exe = std::env::current_exe().ok();
+        let folder = exe.as_deref().and_then(Path::parent);
+        let built = folder.is_some_and(|folder| folder.ends_with("target/debug") || folder.ends_with("target/release"));
+        HSTRING::from(if built { BORROWED } else { phone.app.config().identifier.as_str() })
+    }
+
+    /// A toast's tag, which Windows keeps to 64 characters, where the phone's keys run longer.
+    fn tag(key: &str) -> HSTRING {
+        HSTRING::from(&blake3::hash(key.as_bytes()).to_hex()[..32])
+    }
+
+    /// Words without the control characters XML forbids, which a toast fails on.
+    fn printable(text: &str) -> String {
+        text.chars().filter(|c| !c.is_control() || matches!(c, '\n' | '\t')).collect()
+    }
+
+    /// What the toasts' thread hears: orders, and what the user did with a toast, by its serial.
+    enum Heard {
+        Order(Box<Order>),
+        Clicked(u64),
+        Closed(u64, ToastDismissalReason),
+    }
+
+    /// One of the phone's notifications, as a toast.
+    struct Entry {
+        /// Which showing of it this is, as Windows may still tell of one it replaced.
+        serial: u64,
+        toast: ToastNotification,
+        tag: HSTRING,
+        app: String,
+        label: String,
+        title: String,
+        conversation: Option<String>,
+        picture: Option<PathBuf>,
+    }
+
+    struct Toasts {
+        app: HSTRING,
+        group: HSTRING,
+        notifier: ToastNotifier,
+        history: ToastNotificationHistory,
+        /// Where the notifications' pictures go, as a toast shows pictures from files only.
+        pictures: Option<PathBuf>,
+        shown: HashMap<String, Entry>,
+        serial: u64,
+        /// Numbers each update, so that Windows never takes an older one for the newer.
+        sequence: u32,
+        heard: Sender<Heard>,
+        answers: UnboundedSender<Answer>,
+    }
+
+    impl Toasts {
+        fn new(app: HSTRING, pictures: Option<PathBuf>, heard: Sender<Heard>, answers: UnboundedSender<Answer>) -> Result<Self> {
+            let notifier = ToastNotificationManager::CreateToastNotifierWithId(&app)?;
+            // Toasts from an app id without a Start menu shortcut go nowhere, and nothing says so.
+            match notifier.Setting() {
+                Ok(NotificationSetting::Enabled) => {}
+                Ok(setting) => tracing::warn!("Windows holds back Orither's notifications: {setting:?}"),
+                Err(err) => tracing::warn!("Windows may not show notifications as {app}: {err}"),
+            }
+            let history = ToastNotificationManager::History()?;
+            let group = HSTRING::from(GROUP);
+            // Those of an Orither that ended without taking them away lead nowhere now.
+            if let Err(err) = history.RemoveGroupWithId(&group, &app) {
+                tracing::debug!("clearing old notifications: {err}");
+            }
+            if let Some(folder) = &pictures {
+                let _ = fs::remove_dir_all(folder);
+            }
+            Ok(Self { app, group, notifier, history, pictures, shown: HashMap::new(), serial: 0, sequence: 0, heard, answers })
+        }
+
+        fn run(mut self, hearing: &Receiver<Heard>) {
+            while let Ok(heard) = hearing.recv() {
+                match heard {
+                    Heard::Order(order) => match *order {
+                        Order::Stop(done) => {
+                            self.close_all();
+                            let _ = done.send(());
+                            return;
+                        }
+                        order => self.follow(order),
+                    },
+                    Heard::Clicked(serial) => self.clicked(serial),
+                    Heard::Closed(serial, reason) => self.closed(serial, reason),
+                }
+            }
+        }
+
+        fn follow(&mut self, order: Order) {
+            let done = match order {
+                Order::Show(note) => self.show(note),
+                Order::Close(key) => {
+                    self.close(&key);
+                    Ok(())
+                }
+                Order::Keep(keys) => {
+                    let gone: Vec<String> = self.shown.keys().filter(|key| !keys.contains(*key)).cloned().collect();
+                    gone.iter().for_each(|key| self.close(key));
+                    Ok(())
+                }
+                Order::CloseAll | Order::Stop(_) => {
+                    self.close_all();
+                    Ok(())
+                }
+            };
+            if let Err(err) = done {
+                tracing::warn!("showing a notification: {err:#}");
+            }
+        }
+
+        fn show(&mut self, note: Note) -> Result<()> {
+            let Note { shown, origin, icon, picture } = note;
+            let title = if shown.title.is_empty() { shown.label.clone() } else { shown.title.clone() };
+            // An update that asks for no attention changes the words where they show, and brings nothing back.
+            if !shown.alert {
+                return self.update(&shown.key, title, &shown.text, shown.conversation);
+            }
+            let picture = picture.and_then(|picture| self.keep_picture(&picture));
+            let logo = picture.as_deref().map(|path| (path, true)).or_else(|| icon.as_deref().map(|path| (path, false)));
+            let attribution = printable(&format!("{} · {origin}", shown.label));
+            let content = XmlDocument::new()?;
+            content.LoadXml(&HSTRING::from(super::toast(logo, &attribution, shown.quiet)))?;
+            let toast = ToastNotification::CreateToastNotification(&content)?;
+            let tag = tag(&shown.key);
+            // A toast with the same tag and group takes the place of the one before, in the Action Center too.
+            toast.SetTag(&tag)?;
+            toast.SetGroup(&self.group)?;
+            // Quiet ones go to the Action Center without popping up, as on the phone they are only listed.
+            toast.SetSuppressPopup(shown.quiet)?;
+            toast.SetData(&self.data(&title, &shown.text)?)?;
+            self.serial += 1;
+            self.hear(&toast, self.serial)?;
+            self.notifier.Show(&toast)?;
+            let (app, label, conversation) = (shown.app, shown.label, shown.conversation);
+            let entry = Entry { serial: self.serial, toast, tag, app, label, title, conversation, picture };
+            if let Some(before) = self.shown.insert(shown.key, entry) {
+                self.forget_picture(before.picture);
+            }
+            Ok(())
+        }
+
+        fn update(&mut self, key: &str, title: String, text: &str, conversation: Option<String>) -> Result<()> {
+            let Some(tag) = self.shown.get(key).map(|entry| entry.tag.clone()) else {
+                return Ok(());
+            };
+            let data = self.data(&title, text)?;
+            let updated = self.notifier.UpdateWithTagAndGroup(&data, &tag, &self.group)?;
+            if updated == NotificationUpdateResult::Succeeded {
+                if let Some(entry) = self.shown.get_mut(key) {
+                    (entry.title, entry.conversation) = (title, conversation);
+                }
+            } else if updated == NotificationUpdateResult::NotificationNotFound {
+                // Cleared from the Action Center, which Windows tells only apps from the Store.
+                if let Some(entry) = self.shown.remove(key) {
+                    self.forget_picture(entry.picture);
+                }
+            } else {
+                tracing::warn!("updating a notification: Windows did not take the update");
+            }
+            Ok(())
+        }
+
+        /// The words a toast shows, for the places its content leaves for them.
+        fn data(&mut self, title: &str, text: &str) -> windows::core::Result<NotificationData> {
+            let data = NotificationData::new()?;
+            let values = data.Values()?;
+            values.Insert(&HSTRING::from("title"), &HSTRING::from(printable(title)))?;
+            values.Insert(&HSTRING::from("text"), &HSTRING::from(printable(text)))?;
+            self.sequence = self.sequence.wrapping_add(1).max(1);
+            data.SetSequenceNumber(self.sequence)?;
+            Ok(data)
+        }
+
+        /// Has Windows tell this thread when the toast is clicked or closed. It calls from
+        /// threads of its own, and about a toast it replaced as well.
+        fn hear(&self, toast: &ToastNotification, serial: u64) -> Result<()> {
+            let heard = self.heard.clone();
+            toast.Activated(&TypedEventHandler::<ToastNotification, IInspectable>::new(move |_, _| {
+                let _ = heard.send(Heard::Clicked(serial));
+                Ok(())
+            }))?;
+            let heard = self.heard.clone();
+            toast.Dismissed(&TypedEventHandler::<ToastNotification, ToastDismissedEventArgs>::new(move |_, dismissed| {
+                if let Some(reason) = dismissed.as_ref().and_then(|dismissed| dismissed.Reason().ok()) {
+                    let _ = heard.send(Heard::Closed(serial, reason));
+                }
+                Ok(())
+            }))?;
+            toast.Failed(&TypedEventHandler::<ToastNotification, ToastFailedEventArgs>::new(|_, failed| {
+                match failed.as_ref().and_then(|failed| failed.ErrorCode().ok()) {
+                    Some(code) => tracing::warn!("showing a notification: {}", code.message()),
+                    None => tracing::warn!("showing a notification: Windows did not show it"),
+                }
+                Ok(())
+            }))?;
+            Ok(())
+        }
+
+        fn find(&self, serial: u64) -> Option<String> {
+            self.shown.iter().find(|(_, entry)| entry.serial == serial).map(|(key, _)| key.clone())
+        }
+
+        fn clicked(&mut self, serial: u64) {
+            let Some((key, entry)) = self.find(serial).and_then(|key| self.shown.remove_entry(&key)) else {
+                return;
+            };
+            // It goes from here as a tap closes the phone's shade, which is not a dismissal:
+            // whether a click reads it is for the app to say.
+            self.take_away(&entry);
+            self.forget_picture(entry.picture);
+            let lead = Lead { key, app: entry.app, label: entry.label };
+            let _ = self.answers.send(Answer::Clicked { lead, title: entry.title, conversation: entry.conversation });
+        }
+
+        fn closed(&mut self, serial: u64, reason: ToastDismissalReason) {
+            // One that timed out waits in the Action Center, where a click opens it all the same,
+            // and one hidden was hidden by Orither, or replaced.
+            if reason != ToastDismissalReason::UserCanceled {
+                return;
+            }
+            let Some((key, entry)) = self.find(serial).and_then(|key| self.shown.remove_entry(&key)) else {
+                return;
+            };
+            self.take_away(&entry);
+            self.forget_picture(entry.picture);
+            let _ = self.answers.send(Answer::Dismissed(key));
+        }
+
+        fn close(&mut self, key: &str) {
+            if let Some(entry) = self.shown.remove(key) {
+                self.take_away(&entry);
+                self.forget_picture(entry.picture);
+            }
+        }
+
+        fn close_all(&mut self) {
+            for entry in std::mem::take(&mut self.shown).into_values() {
+                let _ = self.notifier.Hide(&entry.toast);
+            }
+            if let Err(err) = self.history.RemoveGroupWithId(&self.group, &self.app) {
+                tracing::warn!("closing the notifications: {err}");
+            }
+            if let Some(folder) = &self.pictures {
+                let _ = fs::remove_dir_all(folder);
+            }
+        }
+
+        /// Takes a toast off the screen and out of the Action Center.
+        fn take_away(&self, entry: &Entry) {
+            // Hiding fails for a toast that is no longer on the screen, which is no matter.
+            let _ = self.notifier.Hide(&entry.toast);
+            if let Err(err) = self.history.RemoveGroupedTagWithId(&entry.tag, &self.group, &self.app) {
+                tracing::warn!("closing a notification: {err}");
+            }
+        }
+
+        /// Writes a notification's picture for a toast to show, named after what it shows, as
+        /// Windows may show a picture it read before under the same name.
+        fn keep_picture(&self, picture: &Pixels) -> Option<PathBuf> {
+            let folder = self.pictures.as_ref()?;
+            let png = super::png(picture)?;
+            let path = folder.join(format!("{}.png", blake3::hash(&png).to_hex()));
+            let written = fs::create_dir_all(folder).and_then(|()| if path.exists() { Ok(()) } else { fs::write(&path, &png) });
+            match written {
+                Ok(()) => Some(path),
+                Err(err) => {
+                    tracing::warn!("keeping a notification's picture: {err}");
+                    None
+                }
+            }
+        }
+
+        /// Deletes a picture no toast shows any longer.
+        fn forget_picture(&self, picture: Option<PathBuf>) {
+            if let Some(picture) = picture
+                && !self.shown.values().any(|entry| entry.picture.as_ref() == Some(&picture))
+            {
+                let _ = fs::remove_file(picture);
+            }
+        }
+    }
+}
+
+/// On macOS they show through Tauri, which hears no clicks.
+#[cfg(not(any(target_os = "linux", windows)))]
 mod shade {
     use tauri::AppHandle;
     use tauri_plugin_notification::NotificationExt;
@@ -592,5 +1063,98 @@ mod tests {
         assert_eq!(&picture.data[..4], &[200, 200, 200, 255]);
         assert_eq!(picture.data.len(), 2 * 3 * 4);
         assert!(pixels(b"not a picture").is_none());
+    }
+
+    #[test]
+    fn writes_a_picture_back_as_png() {
+        let picture = Pixels { width: 2, height: 1, row: 8, data: vec![1, 2, 3, 4, 5, 6, 7, 8] };
+        let again = pixels(&png(&picture).unwrap()).unwrap();
+        assert_eq!((again.width, again.height, again.row, &again.data), (2, 1, 8, &picture.data));
+        assert!(png(&Pixels { row: 9, ..picture }).is_none());
+    }
+
+    #[test]
+    fn a_toast_binds_its_words_and_escapes_the_rest() {
+        let logo = std::path::Path::new(r"C:\Users\Ada & Bo\cache\a.png");
+        let xml = toast(Some((logo, true)), "Mail <work> · Ada's phone", false);
+        assert!(xml.starts_with(r#"<toast><visual><binding template="ToastGeneric">"#));
+        assert!(xml.contains(r#"<image placement="appLogoOverride" hint-crop="circle" src="file:///C:\Users\Ada &amp; Bo\cache\a.png"/>"#));
+        assert!(xml.contains("<text>{title}</text><text>{text}</text>"));
+        assert!(xml.contains(r#"<text placement="attribution">Mail &lt;work&gt; · Ada's phone</text>"#));
+        assert!(!xml.contains("<audio"));
+        let xml = toast(Some((logo, false)), "Mail", true);
+        assert!(xml.contains(r#"<image placement="appLogoOverride" src="#));
+        assert!(xml.ends_with(r#"</binding></visual><audio silent="true"/></toast>"#));
+        assert!(!toast(None, "Mail", false).contains("<image"));
+    }
+
+    fn shown(key: &str, text: &str) -> Shown {
+        Shown {
+            key: key.into(),
+            app: "com.example".into(),
+            label: "Example".into(),
+            title: "Ada".into(),
+            text: text.into(),
+            alert: true,
+            quiet: false,
+            picture: false,
+            conversation: None,
+        }
+    }
+
+    #[test]
+    fn a_notification_posted_again_unchanged_shows_once() {
+        let (mut memory, now) = (Memory::default(), Instant::now());
+        assert_eq!(memory.heed(&shown("a", "Hi"), now), Heed::Show);
+        assert_eq!(memory.heed(&shown("a", "Hi"), now), Heed::Skip);
+        assert_eq!(memory.heed(&shown("a", "Hi"), now + BURST * 6), Heed::Skip);
+        assert_eq!(memory.heed(&shown("a", "Hi\nAre you there?"), now), Heed::Show);
+        assert_eq!(memory.heed(&shown("a", "Hi\nAre you there?"), now), Heed::Skip);
+        let pictured = Shown { picture: true, ..shown("a", "Hi\nAre you there?") };
+        assert_eq!(memory.heed(&pictured, now), Heed::Show);
+    }
+
+    #[test]
+    fn one_removed_from_the_phone_shows_again_when_posted_again() {
+        let (mut memory, now) = (Memory::default(), Instant::now());
+        assert_eq!(memory.heed(&shown("a", "Hi"), now), Heed::Show);
+        memory.removed("a");
+        assert_eq!(memory.heed(&shown("a", "Hi"), now + BURST), Heed::Show);
+    }
+
+    #[test]
+    fn a_burst_pops_up_only_the_first_few() {
+        let (mut memory, now) = (Memory::default(), Instant::now());
+        let heeded: Vec<Heed> = (0..6).map(|n| memory.heed(&shown(&n.to_string(), "Hi"), now)).collect();
+        assert_eq!(heeded, [Heed::Show, Heed::Show, Heed::Show, Heed::Hush, Heed::Hush, Heed::Hush]);
+        // One that popped up still shows its changes, without taking more room.
+        assert_eq!(memory.heed(&shown("0", "Hi again"), now), Heed::Show);
+        assert_eq!(memory.heed(&shown("6", "Hi"), now + BURST / 2), Heed::Hush);
+        assert_eq!(memory.heed(&shown("7", "Hi"), now + BURST), Heed::Show);
+    }
+
+    #[test]
+    fn quiet_ones_and_updates_that_ask_for_no_attention_take_no_room() {
+        let (mut memory, now) = (Memory::default(), Instant::now());
+        for n in 0..5 {
+            assert_eq!(memory.heed(&Shown { quiet: true, ..shown(&format!("quiet {n}"), "Hi") }, now), Heed::Show);
+            assert_eq!(memory.heed(&Shown { alert: false, ..shown(&format!("update {n}"), "Hi") }, now), Heed::Show);
+        }
+        assert_eq!(memory.heed(&shown("loud", "Hi"), now), Heed::Show);
+    }
+
+    #[test]
+    fn what_the_phone_has_as_it_reconnects_does_not_pop_up_again() {
+        let (mut memory, now) = (Memory::default(), Instant::now());
+        memory.heed(&shown("shown", "Hi"), now);
+        memory.heed(&shown("gone", "Hi"), now);
+        let listed = [shown("shown", "Hi"), shown("came meanwhile", "Hello")];
+        let keys = listed.iter().map(|shown| shown.key.clone()).chain(["odd".into()]).collect();
+        memory.connected(&keys, &listed);
+        let later = now + BURST;
+        assert_eq!(memory.heed(&shown("shown", "Hi"), later), Heed::Skip);
+        assert_eq!(memory.heed(&shown("came meanwhile", "Hello"), later), Heed::Skip);
+        assert_eq!(memory.heed(&shown("came meanwhile", "Hello\nAnyone?"), later), Heed::Show);
+        assert_eq!(memory.heed(&shown("gone", "Hi"), later), Heed::Show);
     }
 }
