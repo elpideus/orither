@@ -1,112 +1,98 @@
 package dev.orither.engine
 
-import android.content.Context
-import android.database.ContentObserver
-import android.database.Cursor
-import android.net.Uri
-import android.os.Handler
-import android.os.Looper
-import android.provider.ContactsContract.PhoneLookup
 import android.provider.Telephony.Sms
-import java.net.Socket
 import org.json.JSONArray
 import org.json.JSONObject
+
+private const val ROW = "Row: "
 
 /**
  * The phone's text messages, read with the shell user's rights. An app that asks for SMS access
  * is blocked by Play Protect when installed from outside Google Play, so the app itself has none
  * and reads its texts through the engine.
+ *
+ * The rows come from Android's own `content query` command, which runs as the shell: a content
+ * resolver in this process names the system's package as the caller, which Android refuses from
+ * the shell's uid. Android does not report changes to the engine either (it is no app process it
+ * knows), so the app asks for new texts when the phone's SMS app posts a notification. The app adds
+ * contact names, with its own contacts permission.
  */
-internal class Texts(shell: Context) {
-    private val resolver = shell.contentResolver
-
-    /** Every conversation, newest first, with the contact's name where the phone knows it. */
+internal class Texts {
+    /** Every conversation, newest first. */
     fun threads(): JSONArray {
-        val columns = arrayOf(Sms.THREAD_ID, Sms.ADDRESS, Sms.BODY, Sms.DATE, Sms.TYPE, Sms.READ)
-        val threads = LinkedHashMap<Int, JSONObject>()
-        resolver.query(Sms.CONTENT_URI, columns, null, null, "${Sms.DATE} DESC")?.use { rows ->
-            while (rows.moveToNext()) {
-                val id = rows.getInt(0)
-                val unread = if (rows.getInt(4) == Sms.MESSAGE_TYPE_INBOX && rows.getInt(5) == 0) 1 else 0
-                val known = threads[id]
-                if (known != null) {
-                    known.put("unread", known.getInt("unread") + unread)
-                } else {
-                    threads[id] = JSONObject()
-                        .put("id", id)
-                        .put("address", rows.text(1))
-                        .put("snippet", rows.text(2))
-                        .put("date", rows.getLong(3))
-                        .put("unread", unread)
-                }
+        val threads = LinkedHashMap<String, JSONObject>()
+        for (row in query("content://sms", listOf("thread_id", "address", "date", "type", "read", "body"), sort = "date DESC")) {
+            val id = row["thread_id"] ?: continue
+            val unread = if (row["type"] == Sms.MESSAGE_TYPE_INBOX.toString() && row["read"] == "0") 1 else 0
+            val known = threads[id]
+            if (known != null) {
+                known.put("unread", known.getInt("unread") + unread)
+            } else {
+                threads[id] = JSONObject()
+                    .put("id", id.toInt())
+                    .put("address", row["address"].orEmpty())
+                    .put("snippet", row["body"].orEmpty())
+                    .put("date", row["date"]?.toLongOrNull() ?: 0)
+                    .put("unread", unread)
             }
         }
-        val names = HashMap<String, String?>()
-        return JSONArray(threads.values.map { thread ->
-            val address = thread.getString("address")
-            thread.put("name", names.getOrPut(address) { name(address) } ?: JSONObject.NULL)
-        })
+        return JSONArray(threads.values)
     }
 
     /** The latest [limit] messages of a conversation, oldest first. */
     fun messages(thread: Int, limit: Int): JSONArray {
-        val columns = arrayOf(Sms._ID, Sms.BODY, Sms.DATE, Sms.TYPE)
-        val rows = resolver.query(Sms.CONTENT_URI, columns, "${Sms.THREAD_ID} = ?", arrayOf(thread.toString()), "${Sms.DATE} DESC LIMIT $limit")
-            ?: return JSONArray()
-        val list = rows.use {
-            buildList {
-                while (it.moveToNext()) {
-                    add(JSONObject().put("id", it.getLong(0)).put("body", it.text(1)).put("date", it.getLong(2)).put("incoming", it.getInt(3) == Sms.MESSAGE_TYPE_INBOX))
-                }
-            }
-        }
-        return JSONArray(list.reversed())
+        val rows = query("content://sms", listOf("_id", "date", "type", "body"), where = "thread_id=$thread", sort = "date DESC LIMIT $limit")
+        return JSONArray(rows.reversed().map { row ->
+            JSONObject()
+                .put("id", row["_id"]?.toLongOrNull() ?: 0)
+                .put("body", row["body"].orEmpty())
+                .put("date", row["date"]?.toLongOrNull() ?: 0)
+                .put("incoming", row["type"] == Sms.MESSAGE_TYPE_INBOX.toString())
+        })
     }
 
-    /** Writes one JSON line to [client] for each text that arrives, until it hangs up. */
-    fun follow(client: Socket) {
-        val output = client.getOutputStream()
-        var last = newest()
-        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean) {
-                runCatching {
-                    for (text in since(last)) {
-                        last = maxOf(last, text.getLong("id"))
-                        Protocol.write(output, text)
-                    }
-                }
-            }
-        }
-        resolver.registerContentObserver(Sms.CONTENT_URI, true, observer)
-        try {
-            client.getInputStream().readBytes()
-        } finally {
-            resolver.unregisterContentObserver(observer)
-        }
-    }
-
-    private fun newest(): Long =
-        resolver.query(Sms.CONTENT_URI, arrayOf(Sms._ID), null, null, "${Sms._ID} DESC LIMIT 1")?.use { if (it.moveToFirst()) it.getLong(0) else 0 } ?: 0
+    /** The id of the newest text, received or sent, or 0 when there is none. */
+    fun newest(): Long =
+        query("content://sms", listOf("_id"), sort = "_id DESC LIMIT 1").firstOrNull()?.get("_id")?.toLongOrNull() ?: 0
 
     /** The incoming texts stored after the one with id [after]. */
-    private fun since(after: Long): List<JSONObject> {
-        val columns = arrayOf(Sms._ID, Sms.ADDRESS, Sms.BODY)
-        val where = "${Sms._ID} > ? AND ${Sms.TYPE} = ${Sms.MESSAGE_TYPE_INBOX}"
-        val rows = resolver.query(Sms.CONTENT_URI, columns, where, arrayOf(after.toString()), "${Sms._ID} ASC") ?: return emptyList()
-        return rows.use {
-            buildList {
-                while (it.moveToNext()) {
-                    val address = it.text(1)
-                    add(JSONObject().put("id", it.getLong(0)).put("address", address).put("body", it.text(2)).put("name", name(address) ?: JSONObject.NULL))
-                }
-            }
-        }
-    }
-
-    private fun name(address: String): String? = runCatching {
-        val uri = Uri.withAppendedPath(PhoneLookup.CONTENT_FILTER_URI, Uri.encode(address))
-        resolver.query(uri, arrayOf(PhoneLookup.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null }
-    }.getOrNull()
+    fun since(after: Long): JSONArray = JSONArray(
+        query("content://sms/inbox", listOf("_id", "address", "body"), where = "_id>$after", sort = "_id ASC").map { row ->
+            JSONObject().put("id", row["_id"]?.toLongOrNull() ?: 0).put("address", row["address"].orEmpty()).put("body", row["body"].orEmpty())
+        },
+    )
 }
 
-private fun Cursor.text(column: Int): String = getString(column).orEmpty()
+/**
+ * Runs `content query` and reads its rows. The last of [columns] takes the rest of each row, line
+ * breaks too, so a free-text column such as a message body goes last.
+ */
+internal fun query(uri: String, columns: List<String>, where: String? = null, sort: String? = null): List<Map<String, String?>> {
+    val command = mutableListOf("content", "query", "--uri", uri, "--projection", columns.joinToString(":"))
+    if (where != null) command += listOf("--where", where)
+    if (sort != null) command += listOf("--sort", sort)
+    val process = ProcessBuilder(command).redirectErrorStream(true).start()
+    val said = process.inputStream.bufferedReader().readText()
+    process.waitFor()
+    return parseRows(said, columns)
+}
+
+/** The rows `content query` printed. Anything else it printed is an error. */
+internal fun parseRows(said: String, columns: List<String>): List<Map<String, String?>> {
+    if (said.isBlank() || said.trim() == "No result found.") return emptyList()
+    check(said.startsWith(ROW)) { said.lineSequence().first().take(200) }
+    val records = Regex("""(?m)^Row: \d+ """).split(said).drop(1)
+    return records.map { record ->
+        val text = record.removeSuffix("\n")
+        val row = HashMap<String, String?>()
+        var at = 0
+        for ((index, column) in columns.withIndex()) {
+            val start = at + column.length + 1
+            val end = if (index == columns.lastIndex) text.length else text.indexOf(", ${columns[index + 1]}=", start).takeIf { it >= 0 } ?: text.length
+            val value = if (start <= end) text.substring(start, end) else ""
+            row[column] = value.takeUnless { it == "NULL" }
+            at = end + 2
+        }
+        row
+    }
+}

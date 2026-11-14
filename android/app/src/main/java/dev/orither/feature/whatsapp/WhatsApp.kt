@@ -3,6 +3,7 @@ package dev.orither.feature.whatsapp
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
+import android.provider.Telephony
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import dev.orither.R
@@ -14,6 +15,7 @@ import dev.orither.feature.calls.Ringing
 import dev.orither.feature.notifications.LISTENER
 import dev.orither.feature.notifications.Shade
 import dev.orither.feature.notifications.listening
+import dev.orither.feature.sms.Messages
 import dev.orither.link.Link
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -93,6 +95,8 @@ class WhatsAppListener : NotificationListenerService() {
 
     override fun onNotificationPosted(posted: StatusBarNotification) {
         if (posted.isWhatsApp()) runCatching { conversations.record(posted) }
+        // The SMS app's notification is how a new text shows itself to an app without SMS access.
+        if (posted.packageName == Telephony.Sms.getDefaultSmsPackage(this)) Messages.textMayHaveArrived()
         Shade.take(this, posted, announce = true)
         Ringing.posted(this, posted)
     }

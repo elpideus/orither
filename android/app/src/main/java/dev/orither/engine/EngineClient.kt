@@ -81,19 +81,14 @@ class EngineClient(context: Context) {
         request(JSONObject().put("op", "texts").put("thread", thread)).getJSONArray("texts")
     }
 
-    /** Calls [arrived] for each incoming text, until the connection breaks. */
-    suspend fun followTexts(arrived: (JSONObject) -> Unit) = withContext(Dispatchers.IO) {
-        open().use { socket ->
-            val cancel = launchClosing(socket)
-            try {
-                val input = BufferedInputStream(socket.getInputStream())
-                Protocol.write(socket.getOutputStream(), JSONObject().put("op", "follow-texts"))
-                checked(Protocol.read(input))
-                while (true) arrived(Protocol.read(input))
-            } finally {
-                cancel.dispose()
-            }
-        }
+    /** The id of the newest text on the phone. */
+    suspend fun newestText(): Long = withContext(Dispatchers.IO) {
+        request(JSONObject().put("op", "newest-text")).getLong("id")
+    }
+
+    /** The texts received after the one with id [after], oldest first. */
+    suspend fun textsSince(after: Long): JSONArray = withContext(Dispatchers.IO) {
+        request(JSONObject().put("op", "texts-since").put("after", after)).getJSONArray("texts")
     }
 
     /** The bytes behind a content URI the app itself may not open. */

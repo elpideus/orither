@@ -34,7 +34,7 @@ object Features {
         installed = listOf(
             Echo(),
             Notifications(context, engine),
-            Messages(engine),
+            Messages(context, engine),
             Calls(context, engine),
             WhatsApp(context, engine),
             Gallery(context),

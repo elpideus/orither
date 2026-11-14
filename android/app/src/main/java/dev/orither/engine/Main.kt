@@ -71,7 +71,7 @@ private class Engine(private val secret: ByteArray) {
     private val clipboard = shell.map(::ClipboardWatch)
     private val tasks = shell.map(::Tasks)
     private val calls = shell.map(::CallAudio)
-    private val texts = shell.map(::Texts)
+    private val texts = runCatching { Texts() }
 
     fun serve() {
         WORK_DIR.mkdirs()
@@ -107,12 +107,8 @@ private class Engine(private val secret: ByteArray) {
                 "bluetooth" -> reply.put("address", bluetoothAddress())
                 "threads" -> reply.put("threads", texts.getOrThrow().threads())
                 "texts" -> reply.put("texts", texts.getOrThrow().messages(request.getInt("thread"), request.optInt("limit", TEXTS_SHOWN)))
-                "follow-texts" -> {
-                    val watch = texts.getOrThrow()
-                    Protocol.write(output, reply)
-                    watch.follow(client)
-                    return
-                }
+                "newest-text" -> reply.put("id", texts.getOrThrow().newest())
+                "texts-since" -> reply.put("texts", texts.getOrThrow().since(request.getLong("after")))
                 "clipboard" -> {
                     val watch = clipboard.getOrThrow()
                     Protocol.write(output, reply)
