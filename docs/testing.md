@@ -89,6 +89,21 @@ manual run of the release workflow.
 The machine uses Windows' 90-day evaluation licence and has no GPU, which makes
 it a good test of Orither's software rendering paths too.
 
+## Video that lags
+
+`ORITHER_VIDEO_STATS=1` makes Orither write, every two seconds, how the video
+arrives (pictures and key frames a second, bit rate, decoding time, and how far
+behind the phone's clock the pictures come), how the window draws it, and the
+link's paths with their round trips. `ORITHER_TEST_VIDEO_KBPS=1500` makes it take
+video no faster than that, which the phone cannot tell from a slow link:
+
+```bash
+ORITHER_VIDEO_STATS=1 ORITHER_TEST_VIDEO_KBPS=1500 tools/testbed/desktop.sh start target/release/orither
+```
+
+The emulator's own network throttle (`adb emu network speed`) does not reach the
+link, so it is no use for this.
+
 ## What these found
 
 - Play Protect blocked Orither 0.1.1 as harmful because of its SMS permissions.
@@ -97,3 +112,6 @@ it a good test of Orither's software rendering paths too.
 - **Turn everything on** left notification access off on apps installed from a
   file (Android's restricted settings) and said nothing.
 - A pairing link that started the app waited for nothing until it gave up.
+- Screen sharing, apps and the camera fell ever further behind whenever the link
+  carried less than the phone sent: 26 seconds on a 1.5 Mbit/s link. Video is
+  paced now (architecture.md, "Keeping video live").

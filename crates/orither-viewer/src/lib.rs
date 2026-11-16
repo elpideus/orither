@@ -9,9 +9,11 @@ pub mod control;
 mod decode;
 mod input;
 mod render;
+mod stats;
 mod stream;
 mod window;
 
 pub use decode::{Frame, H264, Plane};
+pub use stats::Stats;
 pub use stream::{Packet, Reader};
 pub use window::{Options, run};

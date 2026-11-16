@@ -20,6 +20,12 @@ class LinkStream internal constructor(private val handle: Long) {
     /** Carries the stream both ways through an existing socket. Takes ownership of [socket]. */
     fun attach(socket: ParcelFileDescriptor) = Native.pump(handle, socket.detachFd())
 
+    /**
+     * Sends a capture's video from [socket], paced so that it stays live however slow
+     * the link is. Only for a computer that asked for that. Takes ownership of [socket].
+     */
+    fun attachVideo(socket: ParcelFileDescriptor) = Native.pumpVideo(handle, socket.detachFd())
+
     /** Sends the rest of [file], then ends the stream. Takes ownership of [file]. */
     fun send(file: ParcelFileDescriptor) = Native.sendFile(handle, file.detachFd())
 

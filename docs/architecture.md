@@ -95,7 +95,9 @@ The computer always dials the phone, and no Bluetooth pairing dialog appears:
 
 Measured between a POCO F7 and a Linux computer: the link is up in about 3 seconds,
 with a 55 ms round trip, and carries **64 KiB/s (about 0.5 Mbit/s)**. `screen.rs`
-lowers the video to 350 kbit/s at 960 pixels on this route.
+lowers the video to 350 kbit/s at 960 pixels on this route, and the camera to
+350 kbit/s. On the other routes the screen starts at 8 Mbit/s (local), 6 Mbit/s
+(internet) or 4 Mbit/s (relay), and the camera at 4 or 2.5 Mbit/s.
 
 `bluer` 0.17 returns from `connect` before the connection is up. `nearby/linux.rs`
 works around that in `settled`, by waiting for the socket to turn writable.
@@ -221,6 +223,46 @@ The phone encodes H.264 and the link carries it. A window in a process of its ow
 the viewer's stdin, its input comes back on stdout, and closing stdin closes it.
 A separate process keeps a decoder crash or GPU trouble out of the main app.
 
+### Keeping video live
+
+A link can carry less than the phone's encoder makes: a busy Wi-Fi, a relay, a
+route that changes to Bluetooth. A byte stream does not drop anything, so the
+excess used to wait in buffers on the phone (the QUIC stream alone holds about
+1.25 MB), and the picture fell further behind for as long as the link stayed slow:
+26 seconds within half a minute on a 1.5 Mbit/s link in the test lab.
+
+Video now goes through `orither_link::video` on both sides. The computer asks for
+it with `paced: true` when it attaches a capture's video, and a phone that paces
+starts the stream with `pace` before scrcpy's codec id. After every read, the
+computer sends back how many bytes it has taken in all, as a big-endian u64. The
+phone hands the link another piece only while the oldest unconfirmed one has waited
+no more than the quickest confirmation of the last 3 seconds plus 100 ms, and while
+everything unconfirmed fits twice what the link delivered in that time (the best
+delivery rate of the last 2 seconds, at least 32 KiB). A picture that waits 150 ms
+is dropped with every waiting picture before the newest key frame. With no key
+frame waiting, the phone sends a header with every flag set and no data, and drops
+pictures until a key frame comes, repeating that header every 400 ms meanwhile.
+The window answers it with scrcpy's `RESET_VIDEO` (17), at most every 300 ms,
+which restarts the encoder with a key frame but keeps the display and its app. The
+camera has no control channel, so it asks the encoder for a key frame every second
+(`video_codec_options=i-frame-interval:int=1`) instead.
+
+A phone app that does not pace ignores `paced` and starts with the codec id, and
+the computer then confirms nothing, so either side works with an older other.
+
+In the lab (emulator, Settings scrolled hard, a link limited to the rate given):
+
+| Link | Before | Paced |
+| --- | --- | --- |
+| unlimited | 58 fps, a few ms behind | the same |
+| 6 Mbit/s | 36 fps, 7 s behind and growing | 32 fps, at most 0.25 s behind |
+| 1.5 Mbit/s | 7 fps, 26 s behind | 7 fps, at most 0.3 s behind |
+
+When the link stays far slower than the encoder, the picture comes in bursts after
+key frames, but it stays live. scrcpy cannot change its bit rate while it runs, and
+restarting the capture would close an Integrated Mode app's display, so the bit
+rate is only chosen by route when a capture starts.
+
 Integrated Mode starts the app on a virtual display of its own (`new_display`,
 `flex_display`), so a resized window resizes the phone's display and the app reflows.
 On Linux it also writes `orither-<package>.desktop`, whose `StartupWMClass` matches
@@ -281,7 +323,7 @@ too, and removes any a crash left behind when it starts.
   most 4096 bytes, which a pipe takes whole, so a stop can never leave half a frame in
   the FIFO.
 - **Camera:** H.264 from the phone's camera is decoded into a `v4l2loopback` device,
-  as YU12. Loading that module takes root, so **Set up** runs `pkexec` once
+  as YU12. It is paced like the screen (see [Keeping video live](#keeping-video-live)). Loading that module takes root, so **Set up** runs `pkexec` once
   (`hardware/camera_setup.rs`): it writes `/etc/modules-load.d/orither-camera.conf`
   and, unless another file already sets the module's options,
   `/etc/modprobe.d/orither-camera.conf` with `card_label="Orither Camera"

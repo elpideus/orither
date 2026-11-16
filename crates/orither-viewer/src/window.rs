@@ -27,6 +27,7 @@ use crate::{
     decode::{Frame, H264},
     input::Input,
     render::{Renderer, Viewport},
+    stats::{Drawing, Stats},
     stream::{Packet, Reader},
 };
 
@@ -35,6 +36,9 @@ const RESIZE_SETTLES: Duration = Duration::from_millis(180);
 const START_SIZE: LogicalSize<u32> = LogicalSize::new(420, 880);
 const FLEX_START_SIZE: LogicalSize<u32> = LogicalSize::new(1100, 720);
 const SHARE_OF_SCREEN: f64 = 0.85;
+/// How often the window may ask for a fresh key frame after the phone dropped
+/// pictures. The phone says so again while it still waits for one.
+const RESETS_APART: Duration = Duration::from_millis(300);
 
 pub struct Options {
     pub title: String,
@@ -68,16 +72,31 @@ enum Wake {
 
 type Latest = Arc<Mutex<Option<Frame>>>;
 
-fn receive(input: impl Read, latest: &Latest, wake: &EventLoopProxy<Wake>) -> Result<()> {
+fn receive(input: impl Read, latest: &Latest, wake: &EventLoopProxy<Wake>, control: &Sender<Vec<u8>>) -> Result<()> {
     let mut reader = Reader::new(input)?;
     let mut decoder = H264::new()?;
+    let mut stats = Stats::new("window");
+    let mut reset_at: Option<Instant> = None;
     while let Some(packet) = reader.next()? {
         match packet {
             Packet::Session { width, height } => {
                 let _ = wake.send_event(Wake::Size(width, height));
             }
-            Packet::Media { data, .. } => {
-                if let Some(frame) = decoder.decode(&data)? {
+            // A key frame comes sooner when asked for, but each one costs a lot of the link.
+            Packet::Skipped => {
+                if reset_at.is_none_or(|at| at.elapsed() >= RESETS_APART) {
+                    reset_at = Some(Instant::now());
+                    let _ = control.send(control::reset_video());
+                }
+            }
+            Packet::Media { config, key, pts, data } => {
+                if !config {
+                    stats.arrived(pts, key, data.len());
+                }
+                let decoding = Instant::now();
+                let decoded = decoder.decode(&data)?;
+                stats.decoded(decoding.elapsed());
+                if let Some(frame) = decoded {
                     *latest.lock().unwrap() = Some(frame);
                     let _ = wake.send_event(Wake::Picture);
                 }
@@ -120,6 +139,7 @@ struct Viewer {
     fitted: bool,
     resize_at: Option<Instant>,
     failure: Option<anyhow::Error>,
+    drawing: Drawing,
 }
 
 impl Viewer {
@@ -177,11 +197,16 @@ impl Viewer {
     fn draw(&mut self) {
         let viewport = self.viewport();
         let Some(renderer) = &mut self.renderer else { return };
-        if let Some(frame) = self.latest.lock().unwrap().take() {
-            renderer.upload(&frame);
+        let started = Instant::now();
+        let fresh = self.latest.lock().unwrap().take();
+        if let Some(frame) = &fresh {
+            renderer.upload(frame);
         }
         if let Err(err) = renderer.draw(viewport) {
             self.failure = Some(err);
+        }
+        if fresh.is_some() {
+            self.drawing.drew(started.elapsed());
         }
     }
 }
@@ -268,8 +293,10 @@ pub fn run(options: Options) -> Result<()> {
     let latest = Latest::default();
 
     let incoming = latest.clone();
+    let control = start_control();
+    let asking = control.clone();
     thread::spawn(move || {
-        if let Err(err) = receive(io::stdin().lock(), &incoming, &wake) {
+        if let Err(err) = receive(io::stdin().lock(), &incoming, &wake, &asking) {
             eprintln!("video stream: {err:#}");
         }
         let _ = wake.send_event(Wake::Ended);
@@ -278,7 +305,7 @@ pub fn run(options: Options) -> Result<()> {
     let mut viewer = Viewer {
         options,
         latest,
-        control: start_control(),
+        control,
         input: Input::default(),
         window: None,
         renderer: None,
@@ -286,6 +313,7 @@ pub fn run(options: Options) -> Result<()> {
         fitted: false,
         resize_at: None,
         failure: None,
+        drawing: Drawing::new(),
     };
     event_loop.run_app(&mut viewer).context("running the window")?;
     viewer.failure.map_or(Ok(()), Err)

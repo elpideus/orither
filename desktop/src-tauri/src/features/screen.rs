@@ -16,7 +16,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use orither_link::{PeerId, Route, Session};
+use orither_link::{PeerId, Route, Session, video};
 use orither_viewer::{Options, control};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -39,11 +39,14 @@ const SIZED_WITHIN: Duration = Duration::from_secs(3);
 /// Video encoders take sizes in multiples of this.
 const ALIGNMENT: u32 = 8;
 /// The bit rate and the longest side of a picture that a route can carry.
-/// Bluetooth moves about 500 kbit/s, and a picture that outruns it arrives ever later.
+/// Bluetooth moves about 500 kbit/s. Should the link carry less than the phone
+/// sends, the phone drops pictures to stay live (see `orither_link::video`), so
+/// these stay at what a route usually manages rather than at its best.
 fn quality(route: Route) -> (u32, u32) {
     match route {
-        Route::Local => (16_000_000, 1920),
-        Route::Internet | Route::Relay => (6_000_000, 1920),
+        Route::Local => (8_000_000, 1920),
+        Route::Internet => (6_000_000, 1920),
+        Route::Relay => (4_000_000, 1920),
         Route::Nearby => (350_000, 960),
     }
 }
@@ -175,12 +178,13 @@ impl Showing {
         mut input: ChildStdout,
         early: &[u8],
     ) -> Result<()> {
-        let mut video = session.open("screen", "attach", json!({ "session": capture, "channel": 0 })).await?;
+        let attach = json!({ "session": capture, "channel": 0, "paced": true });
+        let mut video = session.open("screen", "attach", attach).await?;
         let mut steering = session.open("screen", "attach", json!({ "session": capture, "channel": 1 })).await?;
         // The phone names its codec once it can take a resize. One sent before
         // that stops the capture, and the window sends its size as it opens.
-        let mut codec = [0; 4];
-        video.recv.read_exact(&mut codec).await.context("the phone's capture stopped as it started")?;
+        let (paced, codec) =
+            video::start(&mut video.recv).await.context("the phone's capture stopped as it started")?;
         pictures.write_all(&codec).await?;
         for message in &self.first {
             steering.send.write_all(message).await?;
@@ -200,15 +204,28 @@ impl Showing {
 
         let mut ignored = io::sink();
         tokio::select! {
-            _ = io::copy(&mut video.recv, &mut pictures) => {}
+            _ = video::receive(&mut video.recv, paced.then_some(&mut video.send), &mut pictures) => {}
             _ = io::copy(&mut input, &mut steering.send) => {}
             _ = io::copy(&mut steering.recv, &mut ignored) => {}
+            () = describe_link(session) => {}
         }
         for message in &self.last {
             steering.send.write_all(message).await?;
         }
         steering.send.flush().await?;
         Ok(())
+    }
+}
+
+/// Says every few seconds how the link carries the video, when the environment sets
+/// `ORITHER_VIDEO_STATS`, as the window then says how the video arrives.
+async fn describe_link(session: &Session) {
+    if env::var_os("ORITHER_VIDEO_STATS").is_none() {
+        return std::future::pending().await;
+    }
+    loop {
+        time::sleep(Duration::from_secs(2)).await;
+        eprintln!("link: {}", session.describe_paths());
     }
 }
 

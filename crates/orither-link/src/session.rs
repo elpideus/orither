@@ -135,6 +135,28 @@ impl Session {
         selected_route(&self.inner.conn.paths())
     }
 
+    /// Each way the connection has to the other device, the one in use marked with
+    /// a star, with its round trip and what it lost: for finding out why something lags.
+    pub fn describe_paths(&self) -> String {
+        let paths = self.inner.conn.paths();
+        let described: Vec<String> = paths
+            .iter()
+            .map(|path| {
+                let stats = path.stats();
+                format!(
+                    "{}{:?} {} ms, window {} KiB, lost {}/{}",
+                    if path.is_selected() { "*" } else { "" },
+                    Route::of_transport(path.remote_addr()),
+                    stats.rtt.as_millis(),
+                    stats.cwnd / 1024,
+                    stats.lost_packets,
+                    stats.sent_packets,
+                )
+            })
+            .collect();
+        described.join("; ")
+    }
+
     /// Reports each change of [`Self::route`] until the connection ends.
     pub(crate) async fn report_routes(&self, events: mpsc::UnboundedSender<Event>) {
         let mut reported = None;

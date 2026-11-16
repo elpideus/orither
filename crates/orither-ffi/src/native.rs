@@ -263,6 +263,16 @@ pub extern "system" fn Java_dev_orither_link_Native_pump<'local>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_orither_link_Native_pumpVideo<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: Local<'local>,
+    handle: jlong,
+    socket: jint,
+) {
+    guarded(&mut env, |_| Bridge::get()?.pump_video(handle as u64, owned(socket)));
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_orither_link_Native_addNearby<'local>(
     mut env: EnvUnowned<'local>,
     _this: Local<'local>,

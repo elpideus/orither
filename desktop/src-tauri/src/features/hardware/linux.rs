@@ -14,8 +14,8 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail, ensure};
-use orither_link::Session;
-use orither_viewer::{H264, Packet, Reader};
+use orither_link::{Duplex, Route, Session, video};
+use orither_viewer::{H264, Packet, Reader, Stats};
 use serde_json::{Value, json};
 use tauri::async_runtime;
 use tokio::{
@@ -46,8 +46,10 @@ const FRAME: usize = 4;
 /// writes this size never leave half a frame behind, which would garble all that follows.
 const WHOLE_WRITE: usize = 4096;
 pub(super) const CAMERA_LABEL: &str = "Orither Camera";
-const CAMERA_BIT_RATE: u32 = 4_000_000;
 const CAMERA_SIZE: u32 = 1280;
+/// A key frame a second, as a camera cannot be asked for one: after the phone drops
+/// pictures to keep up, the picture comes back within that.
+const CAMERA_KEY_FRAMES: &str = "video_codec_options=i-frame-interval:int=1";
 /// The webcam's size until it has seen the phone's pictures. Most phone cameras take
 /// them 4 by 3.
 const CAMERA_FIRST_SIZE: Size = Size { width: CAMERA_SIZE, height: CAMERA_SIZE / 4 * 3 };
@@ -335,16 +337,6 @@ enum Filmed {
 /// built-in webcam would.
 async fn camera(phone: &Phone, session: Session) -> Result<()> {
     let path = camera_device().context("the camera device went away")?;
-    let options = [
-        "video=true".to_owned(),
-        "audio=false".to_owned(),
-        "video_source=camera".to_owned(),
-        "video_codec=h264".to_owned(),
-        "control=false".to_owned(),
-        "send_device_meta=false".to_owned(),
-        format!("video_bit_rate={CAMERA_BIT_RATE}"),
-        format!("max_size={CAMERA_SIZE}"),
-    ];
     let size = preferences::read(&phone.app, CAMERA_PICTURE_SIZE).unwrap_or(CAMERA_FIRST_SIZE);
     let mut webcam = Webcam::open(&path, size)?;
     loop {
@@ -352,12 +344,17 @@ async fn camera(phone: &Phone, session: Session) -> Result<()> {
             webcam.change().await?;
         }
         tracing::info!("a program uses the webcam, so the phone films");
-        let id = capture(phone, &session, options.to_vec()).await?;
+        let id = capture(phone, &session, camera_options(session.route())).await?;
         let capture = Capture { session: session.clone(), id };
-        let video = capture.session.open("screen", "attach", json!({ "session": capture.id, "channel": 0 })).await?;
+        let attach = json!({ "session": capture.id, "channel": 0, "paced": true });
+        let Duplex { mut send, mut recv } = capture.session.open("screen", "attach", attach).await?;
+        let (paced, codec) = video::start(&mut recv).await.context("the phone's camera stopped as it started")?;
+        // Pictures pass through here so that the phone hears what arrived, which keeps them live.
+        let (mut to_film, from_link) = tokio::io::duplex(64 * 1024);
+        async_runtime::spawn(async move { video::receive(&mut recv, paced.then_some(&mut send), &mut to_film).await });
         let (sender, mut pictures) = mpsc::channel(1);
-        let (reader, size) = (SyncIoBridge::new(video.recv), webcam.size());
-        let filming = async_runtime::spawn_blocking(move || film(reader, size, sender));
+        let (reader, size) = (SyncIoBridge::new(from_link), webcam.size());
+        let filming = async_runtime::spawn_blocking(move || film(reader, codec, size, sender));
         let Filmed::Unused(filmed_size) = pass_pictures(&mut pictures, &mut webcam).await? else {
             return filming.await.context("the camera stopped")?;
         };
@@ -372,6 +369,29 @@ async fn camera(phone: &Phone, session: Session) -> Result<()> {
             webcam = Webcam::open(&path, size)?;
         }
     }
+}
+
+/// What the phone films with, for what the route can carry. Bluetooth moves about
+/// 500 kbit/s, and a picture that outruns the link arrives ever later.
+fn camera_options(route: Route) -> Vec<String> {
+    let bit_rate = match route {
+        Route::Local => 4_000_000,
+        Route::Internet | Route::Relay => 2_500_000,
+        Route::Nearby => 350_000,
+    };
+    [
+        "video=true",
+        "audio=false",
+        "video_source=camera",
+        "video_codec=h264",
+        "control=false",
+        "send_device_meta=false",
+        CAMERA_KEY_FRAMES,
+    ]
+    .map(str::to_owned)
+    .into_iter()
+    .chain([format!("video_bit_rate={bit_rate}"), format!("max_size={CAMERA_SIZE}")])
+    .collect()
 }
 
 /// Shows the phone's pictures on the webcam, and black until the first one comes.
@@ -401,12 +421,19 @@ async fn pass_pictures(pictures: &mut mpsc::Receiver<Picture>, webcam: &mut Webc
 
 /// Decodes the phone's video into pictures the webcam's size, until the phone stops
 /// sending or the webcam stops taking them.
-fn film(stream: impl std::io::Read, size: Size, pictures: mpsc::Sender<Picture>) -> Result<()> {
-    let mut reader = Reader::new(stream)?;
+fn film(stream: impl std::io::Read, codec: [u8; 4], size: Size, pictures: mpsc::Sender<Picture>) -> Result<()> {
+    let mut reader = Reader::with_codec(stream, codec)?;
     let mut decoder = H264::new()?;
+    let mut stats = Stats::new("camera");
     while let Some(packet) = reader.next()? {
-        let Packet::Media { data, .. } = packet else { continue };
-        let Some(frame) = decoder.decode(&data)? else { continue };
+        let Packet::Media { config, key, pts, data } = packet else { continue };
+        if !config {
+            stats.arrived(pts, key, data.len());
+        }
+        let decoding = std::time::Instant::now();
+        let decoded = decoder.decode(&data)?;
+        stats.decoded(decoding.elapsed());
+        let Some(frame) = decoded else { continue };
         let own = Size { width: frame.width, height: frame.height };
         if pictures.blocking_send(Picture { size: own, bytes: webcam::fitted(&frame, size) }).is_err() {
             break;

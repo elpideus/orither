@@ -152,6 +152,25 @@ impl Bridge {
         Ok(())
     }
 
+    /// Sends a capture's video from a socket, paced so that it stays live, see
+    /// [`orither_link::video`]. Nothing goes to the socket, which stays open until
+    /// the video ends.
+    pub fn pump_video(&'static self, handle: u64, socket: OwnedFd) -> Result<()> {
+        let stream = self.take_stream(handle)?;
+        let socket = StdUnixStream::from(socket);
+        socket.set_nonblocking(true)?;
+        self.runtime.spawn(async move {
+            let socket = UnixStream::from_std(socket)?;
+            let (reader, _open) = socket.into_split();
+            let sent = orither_link::video::send_paced(reader, stream).await;
+            if let Err(err) = &sent {
+                tracing::debug!("video: {err:#}");
+            }
+            sent
+        });
+        Ok(())
+    }
+
     /// Offers a connected socket, such as a Bluetooth link, as a way to reach a
     /// paired device. The reply holds that device's id.
     pub fn add_nearby(&'static self, socket: OwnedFd, reply: Global<JObject<'static>>) -> Result<()> {

@@ -18,6 +18,7 @@ mod pairing;
 mod route;
 mod session;
 mod store;
+pub mod video;
 
 #[cfg(target_os = "android")]
 pub use iroh::dns::install_android_jni_context;

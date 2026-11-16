@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
@@ -78,7 +79,9 @@ internal class Screen(private val context: Context, private val engine: EngineCl
     override suspend fun stream(method: String, body: JsonElement, stream: LinkStream, peer: String) {
         val session = body.jsonObject.getValue("session").jsonPrimitive.content
         val channel = body.jsonObject.getValue("channel").jsonPrimitive.int
-        stream.attach(engine.attach(session, channel))
+        val paced = body.jsonObject["paced"]?.jsonPrimitive?.booleanOrNull == true
+        val socket = engine.attach(session, channel)
+        if (paced) stream.attachVideo(socket) else stream.attach(socket)
     }
 
     /** A capture has no reason to outlive the computer that asked for it. */

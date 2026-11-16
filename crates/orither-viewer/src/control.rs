@@ -7,6 +7,7 @@ const SCROLL: u8 = 3;
 const BACK: u8 = 4;
 const DISPLAY_POWER: u8 = 10;
 const START_APP: u8 = 16;
+const RESET_VIDEO: u8 = 17;
 const RESIZE_DISPLAY: u8 = 21;
 
 const MOUSE_POINTER: i64 = -1;
@@ -96,6 +97,11 @@ pub fn back(press: Press) -> Vec<u8> {
 /// Turns the phone's own display on or off, without stopping what runs on it.
 pub fn display_power(on: bool) -> Vec<u8> {
     vec![DISPLAY_POWER, u8::from(on)]
+}
+
+/// Asks the phone to start its video afresh, which begins with a key frame.
+pub fn reset_video() -> Vec<u8> {
+    vec![RESET_VIDEO]
 }
 
 pub fn start_app(package: &str) -> Vec<u8> {

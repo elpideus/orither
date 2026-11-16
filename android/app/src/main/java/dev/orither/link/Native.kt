@@ -28,6 +28,7 @@ internal object Native {
     external fun respond(handle: Long, ok: Boolean, body: String)
     external fun open(peer: String, feature: String, method: String, body: String, reply: Reply)
     external fun pump(handle: Long, socket: Int)
+    external fun pumpVideo(handle: Long, socket: Int)
     external fun addNearby(socket: Int, reply: Reply)
     external fun sendFile(handle: Long, file: Int)
     external fun receiveFile(handle: Long, file: Int, reply: Reply)
