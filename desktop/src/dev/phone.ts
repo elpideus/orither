@@ -246,6 +246,8 @@ const pretend = {
   },
   copies: () =>
     emit("notice", { feature: "transfer", method: "progress", body: { id: 1, name: "Matera.mp4", done: 320e6, total: 840e6, finished: false }, peer: null }),
+  refusesClicks: (phone = "POCO F7") => emit("notice", { feature: "screen", method: "touch", body: { phone }, peer: null }),
 };
 Object.assign(window, pretend);
 if (params.has("ring")) setTimeout(() => pretend.callRings(), 600);
+if (params.has("clicks")) setTimeout(() => void pretend.refusesClicks(), 600);

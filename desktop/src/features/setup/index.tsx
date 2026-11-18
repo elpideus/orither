@@ -1,4 +1,4 @@
-import { CircleCheck, Smartphone, TriangleAlert, Usb } from "lucide-react";
+import { CircleCheck, MousePointerClick, Smartphone, TriangleAlert, Usb } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { Feature } from "../../core/feature";
@@ -32,6 +32,9 @@ const STEP_WORDS: Record<Step, string> = {
 type Progress = { step: Step } | { done: string[]; advice?: string } | { error: string };
 
 type Done = { serial: string; missing: string[]; advice?: string | null };
+
+const TOUCH_ADVICE =
+  "The phone lets a computer use its screen only with USB debugging (Security settings) on. Turn it on in Settings › Additional settings › Developer options (it needs a SIM card and a Xiaomi account), restart the phone, then choose Set up under Turn everything on over USB in Orither's settings.";
 
 /** What a finished setup says: what Android kept off, and how to turn it on. */
 function doneWords({ missing, advice }: { missing: string[]; advice?: string | null }): string {
@@ -185,6 +188,10 @@ function Ambient() {
   });
   useNotice<{ serial: string; error: string }>(ID, "failed", ({ serial, error }) => {
     announce({ id: `${ID}-${serial}`, icon: TriangleAlert, title: "Setting up your phone stopped", detail: error, tone: "problem" });
+  });
+  // A Xiaomi, Redmi or POCO phone shows its screen but refuses the computer's clicks until a setting is on.
+  useNotice<{ phone: string }>("screen", "touch", ({ phone }) => {
+    announce({ id: `touch-${phone}`, icon: MousePointerClick, title: `Clicks don't reach ${phone}`, detail: TOUCH_ADVICE, tone: "problem" });
   });
   useEffect(() => () => Object.keys(progress).forEach((serial) => dismiss(`${ID}-${serial}`)), []);
   return null;

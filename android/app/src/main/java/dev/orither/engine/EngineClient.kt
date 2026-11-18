@@ -124,6 +124,11 @@ class EngineClient(context: Context) {
         Unit
     }
 
+    /** Whether the phone takes a computer's touches, as the engine knows it: see its `touch`. */
+    suspend fun touch(): JSONObject = withContext(Dispatchers.IO) {
+        request(JSONObject().put("op", "touch"))
+    }
+
     /** The app in front on the phone's own screen, or null for the home screen and the like. */
     suspend fun foreground(): RunningApp? = withContext(Dispatchers.IO) {
         val front = request(JSONObject().put("op", "foreground")).optJSONObject("front") ?: return@withContext null

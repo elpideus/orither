@@ -36,6 +36,9 @@ const APP_DISPLAY: (u32, u32) = (1100, 720);
 const APP_DPI: u32 = 200;
 /// How long a new window may take to say how large it is.
 const SIZED_WITHIN: Duration = Duration::from_secs(3);
+/// How often an open window asks whether its clicks reach the phone, and how long an answer may take.
+const TOUCH_CHECK_EVERY: Duration = Duration::from_secs(3);
+const TOUCH_ANSWER_WITHIN: Duration = Duration::from_secs(2);
 /// Video encoders take sizes in multiples of this.
 const ALIGNMENT: u32 = 8;
 /// The bit rate and the longest side of a picture that a route can carry.
@@ -217,6 +220,40 @@ impl Showing {
     }
 }
 
+/// Whether the phone refuses this computer's touches, as Xiaomi, Redmi and POCO phones
+/// do without "USB debugging (Security settings)": scrcpy said so, or the phone's own
+/// note of that setting says it is off. Unknown counts as no, and so does a phone app
+/// too old to say.
+async fn touch_refused(session: &Session) -> bool {
+    let Ok(Ok(touch)) = time::timeout(TOUCH_ANSWER_WITHIN, session.call("screen", "touch", json!({}))).await else {
+        return false;
+    };
+    tracing::debug!("the phone on touches: {touch}");
+    refuses(&touch)
+}
+
+/// The phone's answer to `screen.touch` says that touches go nowhere.
+fn refuses(touch: &Value) -> bool {
+    touch["refused"].as_bool() == Some(true) || (touch["xiaomi"].as_bool() == Some(true) && touch["setting"].as_str() == Some("0"))
+}
+
+/// Asks now and then while a window is open whether its clicks reach the phone, and
+/// tells the person once if they do not. Never ends, so it lasts as long as the window.
+async fn watch_touch(phone: &Phone, session: &Session, mut told: bool) {
+    loop {
+        time::sleep(TOUCH_CHECK_EVERY).await;
+        if !told && touch_refused(session).await {
+            told = true;
+            warn_touch(phone, session);
+        }
+    }
+}
+
+fn warn_touch(phone: &Phone, session: &Session) {
+    let name = phone.node.peers().into_iter().find(|status| status.peer.id == session.peer()).map(|status| status.peer.device.name);
+    phone.tell_ui("screen", "touch", json!({ "phone": name.unwrap_or_else(|| "the phone".into()) }));
+}
+
 /// Says every few seconds how the link carries the video, when the environment sets
 /// `ORITHER_VIDEO_STATS`, as the window then says how the video arrives.
 async fn describe_link(session: &Session) {
@@ -309,12 +346,22 @@ impl Screen {
         }
         let (open, phone) = (self.open.clone(), self.phone.clone());
         async_runtime::spawn(async move {
+            let mut showing = showing;
+            let refused = touch_refused(&session).await;
+            if refused {
+                showing.window.title = format!("{} · clicks are off on the phone", showing.window.title);
+                warn_touch(&phone, &session);
+            }
             let started = |capture: &Value| {
                 if let Some(slot) = open.lock().unwrap().get_mut(&key) {
                     *slot = Some(capture.clone());
                 }
             };
-            if let Err(err) = showing.run(session, started).await {
+            let shown = tokio::select! {
+                shown = showing.run(session.clone(), started) => shown,
+                () = watch_touch(&phone, &session, refused) => Ok(()),
+            };
+            if let Err(err) = shown {
                 tracing::warn!("{key}: {err:#}");
                 phone.tell_ui("screen", "failed", json!({ "error": format!("{err:#}") }));
             }
@@ -493,5 +540,16 @@ mod tests {
         assert_eq!(display_size((3300, 2160), 1920), (1920, 1256));
         assert_eq!(display_size((2160, 3300), 960), (624, 960));
         assert_eq!(display_size((3, 0), 1920), (8, 8));
+    }
+
+    #[test]
+    fn touches_count_as_refused_only_on_a_clear_no() {
+        assert!(refuses(&json!({ "refused": true, "xiaomi": true, "setting": "1" })));
+        assert!(refuses(&json!({ "refused": false, "xiaomi": true, "setting": "0" })));
+        assert!(!refuses(&json!({ "refused": false, "xiaomi": true, "setting": "1" })));
+        // A phone that is no Xiaomi, or keeps the setting elsewhere, says nothing about it.
+        assert!(!refuses(&json!({ "refused": false, "xiaomi": false, "setting": "0" })));
+        assert!(!refuses(&json!({ "refused": false, "xiaomi": true, "setting": "" })));
+        assert!(!refuses(&json!(null)));
     }
 }

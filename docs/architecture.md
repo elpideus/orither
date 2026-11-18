@@ -313,6 +313,15 @@ puts the app back on the phone's screen instead of closing it.
 
 In the window, left click is touch, right click is back, and middle click is Home.
 
+Xiaomi, Redmi and POCO phones show their screen to a computer but drop its touches
+unless **USB debugging (Security settings)** is on (and the phone restarted), and
+nothing in the stream says so. scrcpy logs it ("INJECT_EVENTS permission"), and the
+engine remembers that. The computer asks `screen.touch` as a window opens and every
+3 seconds while it is open; the answer is that flag, whether the phone is a Xiaomi,
+and `persist.security.adbinput`, an undocumented note of the setting that only
+counts when it says 0. A refused window says so in its title, and the main window
+explains the setting.
+
 ## Clipboard
 
 The engine watches the phone's clipboard through a `ShellContext`, and the app writes

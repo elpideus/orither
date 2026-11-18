@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
@@ -47,6 +48,7 @@ internal class Screen(private val context: Context, private val engine: EngineCl
             JsonPrimitive(true)
         }
         "foreground" -> front()
+        "touch" -> Json.parseToJsonElement(engine.touch().toString())
         "move" -> {
             val session = body.text("session")
             check(sessions[session] == peer) { "no capture $session for this computer" }

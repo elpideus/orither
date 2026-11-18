@@ -49,6 +49,10 @@ private const val TEXTS_SHOWN = 500
 /** How long scrcpy may take to make a display once its channels are connected. */
 private const val DISPLAY_WAIT_S = 10L
 private val NEW_DISPLAY = Regex("""New display: .* \(id=(\d+)\)""")
+/** What scrcpy says when the phone refuses its touches, as Xiaomi's do without "USB debugging (Security settings)". */
+private val TOUCH_REFUSED = listOf("INJECT_EVENTS permission", "USB debugging (Security Settings)")
+/** Where Xiaomi phones keep "USB debugging (Security settings)", 1 when it is on. Not documented, so only a hint. */
+private const val XIAOMI_INPUT_SETTING = "persist.security.adbinput"
 
 private val WORK_DIR = File("/data/local/tmp/orither")
 private val LOG = File(WORK_DIR, "capture.log")
@@ -65,6 +69,9 @@ private class Capture(
 
 private class Engine(private val secret: ByteArray) {
     private val captures = ConcurrentHashMap<String, Capture>()
+
+    /** scrcpy said the phone refused its touches. It holds until the phone restarts, which ends the engine. */
+    @Volatile private var touchRefused = false
 
     // Built here because the framework objects behind these need the main looper.
     private val shell = runCatching(ShellContext::create)
@@ -131,6 +138,7 @@ private class Engine(private val secret: ByteArray) {
                 "foreground" -> tasks.getOrThrow().front()?.let { reply.put("front", it) }
                 "move" -> move(request.getString("session"), request.getInt("task"))
                 "collapse" -> run(listOf("cmd", "statusbar", "collapse"))
+                "touch" -> touch(reply)
                 "callaudio" -> {
                     val uid = request.optInt("uid", -1)
                     val prepared = calls.getOrThrow().let { if (uid >= 0) it.app(uid) else it.cellular() }
@@ -208,11 +216,24 @@ private class Engine(private val secret: ByteArray) {
         return id
     }
 
+    /**
+     * Whether the phone takes touches from a computer: refused once scrcpy said so, and
+     * the setting Xiaomi phones need, which can say so before any touch.
+     */
+    private fun touch(reply: JSONObject) {
+        val property = { name: String -> output(listOf("getprop", name)).second.trim() }
+        val maker = listOf("ro.product.manufacturer", "ro.product.brand").map { property(it).lowercase() }
+        reply.put("refused", touchRefused)
+        reply.put("xiaomi", maker.any { it in setOf("xiaomi", "redmi", "poco") })
+        reply.put("setting", property(XIAOMI_INPUT_SETTING))
+    }
+
     /** Copies what scrcpy says to the log, picking out the id of the display it makes. */
     private fun follow(output: InputStream, display: CompletableFuture<Int>) {
         FileOutputStream(LOG, true).bufferedWriter().use { log ->
             output.bufferedReader().forEachLine { line ->
                 NEW_DISPLAY.find(line)?.let { display.complete(it.groupValues[1].toInt()) }
+                if (TOUCH_REFUSED.any { it in line }) touchRefused = true
                 log.appendLine(line)
                 log.flush()
             }

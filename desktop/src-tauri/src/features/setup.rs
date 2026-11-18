@@ -110,8 +110,9 @@ impl Setup {
         let allowed = session.call("helper", "allow", json!({})).await?;
         let missing: Vec<String> =
             allowed["missing"].as_array().map(|missing| missing.iter().filter_map(|name| name.as_str().map(str::to_owned)).collect()).unwrap_or_default();
-        if !held_back && !missing.is_empty() {
-            held_back = is_xiaomi(&adb::run(&["-s", serial, "shell", "getprop ro.product.manufacturer; getprop ro.product.brand"]).await?.stdout);
+        if !held_back {
+            let said = adb::run(&["-s", serial, "shell", XIAOMI_PROPERTIES]).await?.stdout;
+            held_back = is_xiaomi(&said) && (!missing.is_empty() || xiaomi_input_off(&said));
         }
         Ok(Done { missing, advice: held_back.then(|| XIAOMI_SECURITY.to_owned()) })
     }
@@ -298,13 +299,21 @@ struct Done {
 /// screen, only with this on.
 const XIAOMI_SECURITY: &str = "This phone lets a computer turn things on, and use the screen, only with \
 USB debugging (Security settings) on. Turn it on in Settings › Additional settings › Developer options \
-(it needs a SIM card and a Xiaomi account), then choose Set up again under Turn everything on over USB in \
-Orither's settings.";
+(it needs a SIM card and a Xiaomi account), restart the phone, then choose Set up again under Turn everything \
+on over USB in Orither's settings.";
 
 /// Whether the phone refused to let adb grant the app's permissions, as Xiaomi's do
 /// without USB debugging (Security settings).
 fn grants_refused(said: &str) -> bool {
     said.contains("INSTALL_GRANT_RUNTIME_PERMISSIONS") || said.contains("INSTALL_GRANT_ALL_REQUESTED_PERMISSIONS")
+}
+
+/// The maker, the brand, and where Xiaomi phones keep "USB debugging (Security settings)",
+/// which is not documented and so only taken as a no when it says 0.
+const XIAOMI_PROPERTIES: &str = "getprop ro.product.manufacturer; getprop ro.product.brand; getprop persist.security.adbinput";
+
+fn xiaomi_input_off(said: &[u8]) -> bool {
+    String::from_utf8_lossy(said).lines().nth(2).is_some_and(|line| line.trim() == "0")
 }
 
 /// Whether `getprop` names Xiaomi as the maker or brand, which covers Redmi and POCO too.
@@ -395,6 +404,14 @@ PackageManager.INSTALL_GRANT_ALL_REQUESTED_PERMISSIONS flag\n\tat com.android.se
         assert!(is_xiaomi(b"Xiaomi\r\nRedmi\r\n"));
         assert!(!is_xiaomi(b"Google\ngoogle\n"));
         assert!(!is_xiaomi(b"samsung\nsamsung\n"));
+    }
+
+    #[test]
+    fn xiaomis_input_setting_counts_only_when_it_says_off() {
+        assert!(xiaomi_input_off(b"Xiaomi\nPOCO\n0\n"));
+        assert!(!xiaomi_input_off(b"Xiaomi\nPOCO\n1\n"));
+        assert!(!xiaomi_input_off(b"Xiaomi\nRedmi\n\n"));
+        assert!(!xiaomi_input_off(b"Google\ngoogle\n"));
     }
 
     #[test]
