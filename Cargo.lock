@@ -4584,7 +4584,7 @@ dependencies = [
 
 [[package]]
 name = "orither-desktop"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4626,7 +4626,7 @@ dependencies = [
 
 [[package]]
 name = "orither-ffi"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "jni 0.22.4",
@@ -4641,7 +4641,7 @@ dependencies = [
 
 [[package]]
 name = "orither-link"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "argon2",
@@ -4663,7 +4663,7 @@ dependencies = [
 
 [[package]]
 name = "orither-viewer"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "openh264",
