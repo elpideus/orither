@@ -74,3 +74,13 @@ test('the installers carry a pinned adb for each system', async () => {
     assert.ok(workflow.includes(`--config src-tauri/adb.${os}.conf.json`), `release.yml does not bundle adb for ${os}`);
   }
 });
+
+test('the Windows installer stops Orither’s own adb before it replaces or removes it', () => {
+  const config = JSON.parse(readFileSync(path.join(root, 'desktop/src-tauri/tauri.conf.json'), 'utf8'));
+  const hooks = readFileSync(path.join(root, 'desktop/src-tauri', config.bundle.windows.nsis.installerHooks), 'utf8');
+  for (const hook of ['NSIS_HOOK_PREINSTALL', 'NSIS_HOOK_PREUNINSTALL']) {
+    const body = hooks.match(new RegExp(`!macro ${hook}\\n([\\s\\S]*?)!macroend`))?.[1] ?? '';
+    assert.match(body, /ORITHER_STOP_OWN_ADB/, `${hook} does not stop adb`);
+  }
+  assert.ok(hooks.includes(String.raw`'$INSTDIR\adb\adb.exe'`), 'the hook stops some other adb than Orither’s');
+});
