@@ -38,6 +38,8 @@ const CONFIRM_AFTER: Duration = Duration::from_secs(4);
 const INSTALL_WITHIN: Duration = Duration::from_secs(300);
 const LINK_WITHIN: Duration = Duration::from_secs(60);
 const POLL: Duration = Duration::from_millis(500);
+/// How often setup asks whether a phone linked before is back, while it waits for the link.
+const RECHECK_LINKED: Duration = Duration::from_secs(2);
 
 /// A phone adb sees.
 #[derive(Serialize)]
@@ -201,10 +203,20 @@ impl Setup {
             bail!("Could not open Orither on the phone.");
         }
         let deadline = Instant::now() + LINK_WITHIN;
+        let mut checked = Instant::now();
         while Instant::now() < deadline {
             let fresh = self.phone.node.peers().into_iter().find(|status| status.online && !known.contains(&status.peer.id.to_string()));
             if let Some(session) = fresh.and_then(|status| self.phone.node.session(&status.peer.id)) {
                 return Ok(session);
+            }
+            // A phone linked before, whose app was just installed or updated, comes back by
+            // itself once the link starts the app: it is no new phone, and setup used to wait
+            // for one until it gave up.
+            if checked.elapsed() >= RECHECK_LINKED {
+                checked = Instant::now();
+                if let Some(session) = self.linked(model).await {
+                    return Ok(session);
+                }
             }
             sleep(POLL).await;
         }
