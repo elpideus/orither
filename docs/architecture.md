@@ -254,13 +254,16 @@ it with `paced: true` when it attaches a capture's video, and a phone that paces
 starts the stream with `pace` before scrcpy's codec id. After every read, the
 computer sends back how many bytes it has taken in all, as a big-endian u64. The
 phone hands the link another piece only while the oldest unconfirmed one has waited
-no more than the quickest confirmation of the last 3 seconds plus 100 ms, and while
-everything unconfirmed fits twice what the link delivered in that time (the best
-delivery rate of the last 2 seconds, at least 32 KiB). A picture that waits 150 ms
-is dropped with every waiting picture before the newest key frame. With no key
-frame waiting, the phone sends a header with every flag set and no data, and drops
-pictures until a key frame comes, repeating that header every 400 ms meanwhile.
-The window answers it with scrcpy's `RESET_VIDEO` (17), at most every 300 ms,
+no more than the quickest confirmation of the last 3 seconds plus the larger of
+250 ms and that quickest confirmation again (a round trip over Wi-Fi and the
+internet swings between one and two times its best), and while everything
+unconfirmed fits twice what the link delivered in that time (the best delivery rate
+of the last 2 seconds, at least 32 KiB). A picture that waits 400 ms is dropped with
+every waiting picture before the newest key frame; every drop costs a key frame,
+which on a slow link is a wait of its own. With no key frame waiting, the phone
+sends a header with every flag set and no data, and drops pictures until a key frame
+comes, repeating that header every second meanwhile. The window answers it with
+scrcpy's `RESET_VIDEO` (17), at most once a second,
 which restarts the encoder with a key frame but keeps the display and its app. The
 camera has no control channel, so it asks the encoder for a key frame every second
 (`video_codec_options=i-frame-interval:int=1`) instead.

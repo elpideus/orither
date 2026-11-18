@@ -38,7 +38,7 @@ const FLEX_START_SIZE: LogicalSize<u32> = LogicalSize::new(1100, 720);
 const SHARE_OF_SCREEN: f64 = 0.85;
 /// How often the window may ask for a fresh key frame after the phone dropped
 /// pictures. The phone says so again while it still waits for one.
-const RESETS_APART: Duration = Duration::from_millis(300);
+const RESETS_APART: Duration = Duration::from_secs(1);
 
 pub struct Options {
     pub title: String,

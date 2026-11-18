@@ -95,10 +95,12 @@ it a good test of Orither's software rendering paths too.
 arrives (pictures and key frames a second, bit rate, decoding time, and how far
 behind the phone's clock the pictures come), how the window draws it, and the
 link's paths with their round trips. `ORITHER_TEST_VIDEO_KBPS=1500` makes it take
-video no faster than that, which the phone cannot tell from a slow link:
+video no faster than that, which the phone cannot tell from a slow link, and
+`ORITHER_TEST_VIDEO_RTT_MS=100` holds each confirmation back by 60 to 170 ms, as an
+uneven round trip over the internet does:
 
 ```bash
-ORITHER_VIDEO_STATS=1 ORITHER_TEST_VIDEO_KBPS=1500 tools/testbed/desktop.sh start target/release/orither
+ORITHER_VIDEO_STATS=1 ORITHER_TEST_VIDEO_KBPS=1500 ORITHER_TEST_VIDEO_RTT_MS=100 tools/testbed/desktop.sh start target/release/orither
 ```
 
 The emulator's own network throttle (`adb emu network speed`) does not reach the

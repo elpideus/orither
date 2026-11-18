@@ -46,12 +46,15 @@ const CONFIG: u8 = 0x40;
 const KEY: u8 = 0x20;
 
 /// How much longer than the quickest confirmation lately the oldest unconfirmed
-/// bytes may take before the sender holds back.
-const SLACK: Duration = Duration::from_millis(100);
+/// bytes may take before the sender holds back: at least this, and at least that
+/// quickest confirmation again, as a round trip over Wi-Fi and the internet swings
+/// between one and two times its best.
+const SLACK: Duration = Duration::from_millis(250);
 /// What the sender assumes before the first confirmation.
 const FIRST_CONFIRMATION: Duration = Duration::from_millis(200);
-/// How long a picture may wait to be sent before the waiting ones are dropped.
-const STALE: Duration = Duration::from_millis(150);
+/// How long a picture may wait to be sent before the waiting ones are dropped. Each
+/// drop costs a key frame, which on a slow link is a wait of its own.
+const STALE: Duration = Duration::from_millis(400);
 /// How far back the quickest confirmation counts, so that a slower route is learnt.
 const REMEMBER: Duration = Duration::from_secs(3);
 /// What may be on its way at least, however slow the link seemed, so that a
@@ -61,7 +64,7 @@ const LEAST_IN_FLIGHT: u64 = 32 * 1024;
 const RATE_OVER: Duration = Duration::from_secs(2);
 /// How often a sender still waiting for a key frame says so again, in case the
 /// receiver's first request for one went nowhere.
-const SKIPPED_AGAIN: Duration = Duration::from_millis(400);
+const SKIPPED_AGAIN: Duration = Duration::from_secs(1);
 
 struct Waiting {
     bytes: Vec<u8>,
@@ -163,11 +166,11 @@ impl Pacer {
     fn may_send(&self, now: Instant, next: usize) -> bool {
         let Some(&(_, oldest, _)) = self.unconfirmed.front() else { return true };
         let quickest = self.delays.iter().map(|&(_, delay)| delay).min().unwrap_or(FIRST_CONFIRMATION);
-        if now.duration_since(oldest) > quickest + SLACK {
+        if now.duration_since(oldest) > quickest + SLACK.max(quickest) {
             return false;
         }
         let Some(rate) = self.rate() else { return true };
-        let allowed = (2.0 * rate * (quickest + SLACK).as_secs_f64()) as u64;
+        let allowed = (2.0 * rate * (quickest + SLACK.max(quickest)).as_secs_f64()) as u64;
         self.sent - self.confirmed + next as u64 <= allowed.max(LEAST_IN_FLIGHT)
     }
 
@@ -328,28 +331,72 @@ pub async fn receive(
     confirm: Option<&mut (impl AsyncWrite + Unpin)>,
     out: &mut (impl AsyncWrite + Unpin),
 ) -> Result<()> {
-    let limit = test_limit();
+    let (limit, round_trip) = (test_limit(), test_round_trip());
     let mut buffer = vec![0; if limit.is_some() { 4096 } else { 64 * 1024 }];
     let (mut total, mut allowed) = (0u64, Instant::now());
     let mut confirm = confirm;
+    // Confirmations held back to stand in for a slow round trip, in order.
+    let (mut held, mut jitter) = (VecDeque::<(Instant, u64)>::new(), Jitter::default());
     loop {
-        let read = recv.read(&mut buffer).await?;
-        if read == 0 {
-            return Ok(());
-        }
-        out.write_all(&buffer[..read]).await?;
-        out.flush().await?;
-        total += read as u64;
-        if let Some(bits_per_second) = limit {
-            allowed = allowed.max(Instant::now()) + Duration::from_secs_f64(read as f64 * 8.0 / bits_per_second);
-            sleep_until(allowed).await;
-        }
+        let due = held.front().map(|&(due, _)| due);
+        let total_now = tokio::select! {
+            read = recv.read(&mut buffer) => {
+                let read = read?;
+                if read == 0 {
+                    return Ok(());
+                }
+                out.write_all(&buffer[..read]).await?;
+                out.flush().await?;
+                total += read as u64;
+                if let Some(bits_per_second) = limit {
+                    allowed = allowed.max(Instant::now()) + Duration::from_secs_f64(read as f64 * 8.0 / bits_per_second);
+                    sleep_until(allowed).await;
+                }
+                match round_trip {
+                    Some(round_trip) => {
+                        let after = held.back().map_or(Instant::now(), |&(due, _)| due);
+                        held.push_back(((Instant::now() + jitter.around(round_trip)).max(after), total));
+                        continue;
+                    }
+                    None => total,
+                }
+            }
+            () = async { sleep_until(due.unwrap_or_else(Instant::now)).await }, if due.is_some() => {
+                held.pop_front().map_or(total, |(_, total)| total)
+            }
+        };
         // A sender that stopped listening has finished, and the rest still counts.
         if let Some(writer) = confirm.as_deref_mut()
-            && writer.write_all(&total.to_be_bytes()).await.is_err()
+            && writer.write_all(&total_now.to_be_bytes()).await.is_err()
         {
             confirm = None;
         }
+    }
+}
+
+/// For trying a slow, uneven link without one: `ORITHER_TEST_VIDEO_RTT_MS` holds each
+/// confirmation back by 0.6 to 1.7 times that, which the sender takes for the round trip.
+fn test_round_trip() -> Option<Duration> {
+    let ms: u64 = std::env::var("ORITHER_TEST_VIDEO_RTT_MS").ok()?.parse().ok()?;
+    (ms > 0).then(|| Duration::from_millis(ms))
+}
+
+/// Uneven delays for [`test_round_trip`], from a small generator of its own.
+struct Jitter(u64);
+
+impl Default for Jitter {
+    fn default() -> Self {
+        Self(0x9E37_79B9_7F4A_7C15)
+    }
+}
+
+impl Jitter {
+    fn around(&mut self, round_trip: Duration) -> Duration {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        let share = 0.6 + (self.0 % 1000) as f64 / 1000.0 * 1.1;
+        round_trip.mul_f64(share)
     }
 }
 
@@ -405,21 +452,24 @@ mod tests {
         for frame in 2..10u32 {
             arrive(&mut pacer, picture(false, 100), start + MS * (frame * 16));
         }
-        assert!(pacer.next(start + 131 * MS).is_none());
+        let holding = start + 20 * MS + 10 * MS + SLACK + 20 * MS;
+        assert!(holding < start + 32 * MS + STALE);
+        assert!(pacer.next(holding).is_none());
         assert_eq!(pacer.waiting.len(), 8);
 
-        pacer.confirm(pacer.sent, start + 250 * MS);
-        let bytes = pacer.next(start + 250 * MS).expect("the receiver hears about the drop");
+        let stale = start + 32 * MS + STALE + 10 * MS;
+        pacer.confirm(pacer.sent, stale);
+        let bytes = pacer.next(stale).expect("the receiver hears about the drop");
         assert_eq!(bytes, SKIPPED);
         assert!(pacer.waiting.is_empty() && pacer.skipping);
 
         // Until a key frame, pictures are dropped as they come.
-        arrive(&mut pacer, picture(false, 100), start + 260 * MS);
+        arrive(&mut pacer, picture(false, 100), stale + 10 * MS);
         assert!(pacer.waiting.is_empty());
-        arrive(&mut pacer, picture(true, 100), start + 270 * MS);
+        arrive(&mut pacer, picture(true, 100), stale + 20 * MS);
         assert!(!pacer.skipping);
-        pacer.confirm(pacer.sent, start + 271 * MS);
-        assert_eq!(pacer.next(start + 271 * MS).map(|bytes| bytes[0]), Some(KEY));
+        pacer.confirm(pacer.sent, stale + 21 * MS);
+        assert_eq!(pacer.next(stale + 21 * MS).map(|bytes| bytes[0]), Some(KEY));
     }
 
     #[test]
@@ -428,11 +478,11 @@ mod tests {
         arrive(&mut pacer, picture(true, 100), start);
         assert!(pacer.next(start).is_some());
         arrive(&mut pacer, picture(false, 100), start + 10 * MS);
-        pacer.confirm(pacer.sent, start + 300 * MS);
-        assert_eq!(pacer.next(start + 300 * MS), Some(SKIPPED.to_vec()));
-        pacer.confirm(pacer.sent, start + 301 * MS);
+        let skipped = start + 10 * MS + STALE + 10 * MS;
+        pacer.confirm(pacer.sent, skipped);
+        assert_eq!(pacer.next(skipped), Some(SKIPPED.to_vec()));
+        pacer.confirm(pacer.sent, skipped + MS);
         // Pictures keep coming without a key frame, so the receiver hears again a while later.
-        let skipped = start + 300 * MS;
         arrive(&mut pacer, picture(false, 100), skipped + SKIPPED_AGAIN - 50 * MS);
         assert!(pacer.next(skipped + SKIPPED_AGAIN - 50 * MS).is_none());
         arrive(&mut pacer, picture(false, 100), skipped + SKIPPED_AGAIN + 50 * MS);
@@ -447,8 +497,9 @@ mod tests {
         arrive(&mut pacer, picture(false, 100), start + 10 * MS);
         arrive(&mut pacer, picture(true, 100), start + 20 * MS);
         arrive(&mut pacer, picture(false, 100), start + 30 * MS);
-        pacer.confirm(pacer.sent, start + 300 * MS);
-        let next = pacer.next(start + 300 * MS).expect("the newer key frame");
+        let stale = start + 10 * MS + STALE + 10 * MS;
+        pacer.confirm(pacer.sent, stale);
+        let next = pacer.next(stale).expect("the newer key frame");
         assert_eq!(next[0], KEY);
         assert_eq!(pacer.waiting.len(), 1);
         assert!(!pacer.skipping);
@@ -481,9 +532,11 @@ mod tests {
         }
         assert!(pacer.unconfirmed.is_empty());
         // Big pictures now: one goes, and the next waits, as both are more than the link
-        // delivers in the time allowed.
-        arrive(&mut pacer, picture(false, 30_000), now);
-        arrive(&mut pacer, picture(false, 30_000), now);
+        // delivers in the time allowed, twice over.
+        let allowed = 2.0 * 100_000.0 * (100 * MS + SLACK.max(100 * MS)).as_secs_f64();
+        let big = (allowed * 0.6) as usize;
+        arrive(&mut pacer, picture(false, big), now);
+        arrive(&mut pacer, picture(false, big), now);
         assert!(pacer.next(now).is_some());
         assert!(pacer.next(now + MS).is_none());
     }
