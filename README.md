@@ -374,7 +374,9 @@ Orither is free software, licensed under the
 version. Version 0.1.0 was released under the Apache License 2.0, and stays
 available under it.
 
-Orither ships the scrcpy server (Apache License 2.0) and OpenH264 (BSD), see
+Orither ships the scrcpy server (Apache License 2.0), with a small change of its own
+that lets the video's bit rate follow the link
+([android/scrcpy](android/scrcpy/bit-rate.patch)), and OpenH264 (BSD), see
 [NOTICE](NOTICE).
 
 OpenH264 is compiled from source here, so Cisco's patent licence, which covers

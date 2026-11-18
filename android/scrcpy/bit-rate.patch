@@ -1,0 +1,147 @@
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
+index 777873b..e92d109 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessage.java
+@@ -30,6 +30,8 @@ public final class ControlMessage {
+     public static final int TYPE_CAMERA_ZOOM_OUT = 20;
+     public static final int TYPE_RESIZE_DISPLAY = 21;
+     public static final int TYPE_SCAN_FILE = 22;
++    // Orither: set the video bit rate while capturing, far from upstream's numbers
++    public static final int TYPE_SET_VIDEO_BIT_RATE = 100;
+ 
+     public static final long SEQUENCE_INVALID = 0;
+ 
+@@ -59,6 +61,7 @@ public final class ControlMessage {
+     private int vendorId;
+     private int productId;
+     private int width;
++    private int bitRate;
+     private int height;
+ 
+     private ControlMessage() {
+@@ -188,6 +191,13 @@ public final class ControlMessage {
+         return msg;
+     }
+ 
++    public static ControlMessage createSetVideoBitRate(int bitRate) {
++        ControlMessage msg = new ControlMessage();
++        msg.type = TYPE_SET_VIDEO_BIT_RATE;
++        msg.bitRate = bitRate;
++        return msg;
++    }
++
+     public static ControlMessage createScanFile(String path) {
+         ControlMessage msg = new ControlMessage();
+         msg.type = TYPE_SCAN_FILE;
+@@ -279,6 +289,10 @@ public final class ControlMessage {
+         return productId;
+     }
+ 
++    public int getBitRate() {
++        return bitRate;
++    }
++
+     public int getWidth() {
+         return width;
+     }
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
+index b2591d6..e5ff3dd 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/ControlMessageReader.java
+@@ -64,6 +64,8 @@ public class ControlMessageReader {
+                 return parseResizeDisplay();
+             case ControlMessage.TYPE_SCAN_FILE:
+                 return parseScanFile();
++            case ControlMessage.TYPE_SET_VIDEO_BIT_RATE:
++                return ControlMessage.createSetVideoBitRate(dis.readInt());
+             default:
+                 throw new ControlProtocolException("Unknown event type: " + type);
+         }
+diff --git a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
+index 55d6e11..ca53c6f 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
++++ b/server/src/main/java/com/genymobile/scrcpy/control/Controller.java
+@@ -337,6 +337,9 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
+             case ControlMessage.TYPE_RESET_VIDEO:
+                 resetVideo();
+                 return true;
++            case ControlMessage.TYPE_SET_VIDEO_BIT_RATE:
++                setVideoBitRate(msg.getBitRate());
++                return true;
+             default:
+                 // fall through
+         }
+@@ -876,6 +879,13 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
+         }
+     }
+ 
++    private void setVideoBitRate(int bitRate) {
++        if (surfaceCapture != null && bitRate > 0) {
++            Ln.i("Video bit rate: " + bitRate);
++            surfaceCapture.getCaptureControl().setBitRate(bitRate);
++        }
++    }
++
+     private void resizeDisplay(int width, int height) {
+         NewDisplayCapture newDisplayCapture = (NewDisplayCapture) surfaceCapture;
+         newDisplayCapture.requestResize(width, height);
+diff --git a/server/src/main/java/com/genymobile/scrcpy/video/CaptureControl.java b/server/src/main/java/com/genymobile/scrcpy/video/CaptureControl.java
+index 7933ea7..71c2a87 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/video/CaptureControl.java
++++ b/server/src/main/java/com/genymobile/scrcpy/video/CaptureControl.java
+@@ -1,6 +1,7 @@
+ package com.genymobile.scrcpy.video;
+ 
+ import android.media.MediaCodec;
++import android.os.Bundle;
+ 
+ public class CaptureControl {
+ 
+@@ -14,6 +15,9 @@ public class CaptureControl {
+     // Current instance of MediaCodec to "interrupt" on reset
+     private MediaCodec runningMediaCodec;
+ 
++    // Orither: the bit rate the client asked for while capturing, 0 for the one it started with
++    private int bitRate = 0;
++
+     public synchronized boolean isResetRequested() {
+         return reset != 0;
+     }
+@@ -36,6 +40,24 @@ public class CaptureControl {
+         }
+     }
+ 
++    /** Orither: changes the bit rate of the running encoder, and of the ones after a reset. */
++    public synchronized void setBitRate(int bitRate) {
++        this.bitRate = bitRate;
++        if (runningMediaCodec != null) {
++            Bundle params = new Bundle();
++            params.putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, bitRate);
++            try {
++                runningMediaCodec.setParameters(params);
++            } catch (IllegalStateException e) {
++                // ignore, the next encoder takes it
++            }
++        }
++    }
++
++    public synchronized int getBitRate(int initial) {
++        return bitRate != 0 ? bitRate : initial;
++    }
++
+     public synchronized void setRunningMediaCodec(MediaCodec runningMediaCodec) {
+         this.runningMediaCodec = runningMediaCodec;
+     }
+diff --git a/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java b/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java
+index 539681b..cba20c2 100644
+--- a/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java
++++ b/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java
+@@ -119,6 +119,8 @@ public class SurfaceEncoder implements AsyncProcessor {
+ 
+                 format.setInteger(MediaFormat.KEY_WIDTH, size.getWidth());
+                 format.setInteger(MediaFormat.KEY_HEIGHT, size.getHeight());
++                // Orither: an encoder after a reset keeps the bit rate the client set
++                format.setInteger(MediaFormat.KEY_BIT_RATE, captureControl.getBitRate(videoBitRate));
+ 
+                 Surface surface = null;
+                 boolean mediaCodecStarted = false;

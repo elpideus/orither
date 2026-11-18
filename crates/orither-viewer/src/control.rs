@@ -9,6 +9,8 @@ const DISPLAY_POWER: u8 = 10;
 const START_APP: u8 = 16;
 const RESET_VIDEO: u8 = 17;
 const RESIZE_DISPLAY: u8 = 21;
+/// Orither's own, added to the scrcpy server it carries (android/scrcpy).
+const SET_VIDEO_BIT_RATE: u8 = 100;
 
 const MOUSE_POINTER: i64 = -1;
 const PRIMARY_BUTTON: u32 = 1;
@@ -97,6 +99,13 @@ pub fn back(press: Press) -> Vec<u8> {
 /// Turns the phone's own display on or off, without stopping what runs on it.
 pub fn display_power(on: bool) -> Vec<u8> {
     vec![DISPLAY_POWER, u8::from(on)]
+}
+
+/// Sets the bit rate of the phone's video while it plays, in bits a second.
+pub fn set_video_bit_rate(bit_rate: u32) -> Vec<u8> {
+    let mut message = vec![SET_VIDEO_BIT_RATE];
+    message.extend_from_slice(&bit_rate.to_be_bytes());
+    message
 }
 
 /// Asks the phone to start its video afresh, which begins with a key frame.

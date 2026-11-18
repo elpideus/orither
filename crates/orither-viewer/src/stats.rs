@@ -61,6 +61,13 @@ impl Stats {
         self.bytes += bytes;
     }
 
+    /// Says something that happened to the video, among the numbers.
+    pub fn note(&self, what: &str) {
+        if self.on {
+            eprintln!("video {}: {what}", self.label);
+        }
+    }
+
     pub fn decoded(&mut self, took: Duration) {
         if !self.on {
             return;

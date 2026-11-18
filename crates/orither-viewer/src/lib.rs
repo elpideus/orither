@@ -8,6 +8,7 @@
 pub mod control;
 mod decode;
 mod input;
+mod rate;
 mod render;
 mod stats;
 mod stream;

@@ -85,6 +85,11 @@ struct Front {
 }
 
 impl Showing {
+    /// The bit rate the capture starts at, from its options.
+    fn bit_rate(&self) -> u32 {
+        self.options.iter().find_map(|option| option.strip_prefix("video_bit_rate=")?.parse().ok()).unwrap_or(0)
+    }
+
     fn common(session: &Session) -> Vec<String> {
         let (bit_rate, max_size) = quality(session.route());
         [
@@ -109,7 +114,7 @@ impl Showing {
         } else {
             (Vec::new(), Vec::new())
         };
-        let window = Options { title, app_id: "orither-mirror".into(), icon: None, flex: false };
+        let window = Options { title, app_id: "orither-mirror".into(), icon: None, flex: false, bit_rate: 0 };
         Self { options: Self::common(session), window, first, last, task: None, lead: None }
     }
 
@@ -117,7 +122,7 @@ impl Showing {
     fn own_display(session: &Session, package: &str, label: String, icon: Option<PathBuf>) -> Self {
         let mut options = Self::common(session);
         options.extend(["flex_display=true", "vd_system_decorations=false"].map(str::to_owned));
-        let window = Options { title: label, app_id: app_id(package), icon, flex: true };
+        let window = Options { title: label, app_id: app_id(package), icon, flex: true, bit_rate: 0 };
         Self { options, window, first: Vec::new(), last: Vec::new(), task: None, lead: None }
     }
 
@@ -218,6 +223,13 @@ impl Showing {
         steering.send.flush().await?;
         Ok(())
     }
+}
+
+/// Whether the phone's scrcpy server takes a new bit rate while it captures, which this
+/// computer then fits to the link (`orither_viewer`'s `rate`). An app too old to say cannot.
+async fn adapts_bit_rate(session: &Session) -> bool {
+    let asked = time::timeout(TOUCH_ANSWER_WITHIN, session.call("screen", "abilities", json!({}))).await;
+    matches!(asked, Ok(Ok(abilities)) if abilities["bitRate"].as_bool() == Some(true))
 }
 
 /// Whether the phone refuses this computer's touches, as Xiaomi, Redmi and POCO phones
@@ -347,6 +359,9 @@ impl Screen {
         let (open, phone) = (self.open.clone(), self.phone.clone());
         async_runtime::spawn(async move {
             let mut showing = showing;
+            if adapts_bit_rate(&session).await {
+                showing.window.bit_rate = showing.bit_rate();
+            }
             let refused = touch_refused(&session).await;
             if refused {
                 showing.window.title = format!("{} · clicks are off on the phone", showing.window.title);

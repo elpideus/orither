@@ -49,6 +49,8 @@ internal class Screen(private val context: Context, private val engine: EngineCl
         }
         "foreground" -> front()
         "touch" -> Json.parseToJsonElement(engine.touch().toString())
+        // This app's scrcpy server takes a new bit rate while it captures, see android/scrcpy.
+        "abilities" -> buildJsonObject { put("bitRate", true) }
         "move" -> {
             val session = body.text("session")
             check(sessions[session] == peer) { "no capture $session for this computer" }

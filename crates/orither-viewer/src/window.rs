@@ -27,6 +27,7 @@ use crate::{
     decode::{Frame, H264},
     input::Input,
     render::{Renderer, Viewport},
+    rate::{BitRate, Lateness},
     stats::{Drawing, Stats},
     stream::{Packet, Reader},
 };
@@ -47,6 +48,9 @@ pub struct Options {
     pub icon: Option<PathBuf>,
     /// Whether the phone's display follows the size of the window.
     pub flex: bool,
+    /// The bit rate the phone's video starts at, which the window may lower and raise
+    /// again to fit the link, or 0 where the phone cannot change it.
+    pub bit_rate: u32,
 }
 
 impl Options {
@@ -54,13 +58,14 @@ impl Options {
     pub fn to_args(&self) -> Vec<String> {
         let icon = self.icon.as_ref().map(|icon| icon.to_string_lossy().into_owned());
         let flex = if self.flex { "flex" } else { "fixed" };
-        vec![self.title.clone(), self.app_id.clone(), icon.unwrap_or_default(), flex.to_owned()]
+        vec![self.title.clone(), self.app_id.clone(), icon.unwrap_or_default(), flex.to_owned(), self.bit_rate.to_string()]
     }
 
     pub fn from_args(mut args: impl Iterator<Item = String>) -> Option<Self> {
         let (title, app_id, icon, flex) = (args.next()?, args.next()?, args.next()?, args.next()?);
         let icon = (!icon.is_empty()).then(|| icon.into());
-        Some(Self { title, app_id, icon, flex: flex == "flex" })
+        let bit_rate = args.next().and_then(|rate| rate.parse().ok()).unwrap_or(0);
+        Some(Self { title, app_id, icon, flex: flex == "flex", bit_rate })
     }
 }
 
@@ -72,11 +77,18 @@ enum Wake {
 
 type Latest = Arc<Mutex<Option<Frame>>>;
 
-fn receive(input: impl Read, latest: &Latest, wake: &EventLoopProxy<Wake>, control: &Sender<Vec<u8>>) -> Result<()> {
+fn receive(
+    input: impl Read,
+    latest: &Latest,
+    wake: &EventLoopProxy<Wake>,
+    control: &Sender<Vec<u8>>,
+    bit_rate: u32,
+) -> Result<()> {
     let mut reader = Reader::new(input)?;
     let mut decoder = H264::new()?;
     let mut stats = Stats::new("window");
     let mut reset_at: Option<Instant> = None;
+    let (mut rate, mut lateness) = (BitRate::new(bit_rate, Instant::now()), Lateness::default());
     while let Some(packet) = reader.next()? {
         match packet {
             Packet::Session { width, height } => {
@@ -84,6 +96,9 @@ fn receive(input: impl Read, latest: &Latest, wake: &EventLoopProxy<Wake>, contr
             }
             // A key frame comes sooner when asked for, but each one costs a lot of the link.
             Packet::Skipped => {
+                // A lower bit rate first, so that the fresh key frame comes at it.
+                let changed = rate.as_mut().and_then(|rate| rate.dropped(Instant::now()));
+                set_rate(control, &stats, changed, "the phone dropped pictures");
                 if reset_at.is_none_or(|at| at.elapsed() >= RESETS_APART) {
                     reset_at = Some(Instant::now());
                     let _ = control.send(control::reset_video());
@@ -92,6 +107,10 @@ fn receive(input: impl Read, latest: &Latest, wake: &EventLoopProxy<Wake>, contr
             Packet::Media { config, key, pts, data } => {
                 if !config {
                     stats.arrived(pts, key, data.len());
+                    let now = Instant::now();
+                    let late = lateness.arrived(pts, now);
+                    let changed = rate.as_mut().and_then(|rate| rate.arrived(late, now));
+                    set_rate(control, &stats, changed, "to fit how pictures arrive");
                 }
                 let decoding = Instant::now();
                 let decoded = decoder.decode(&data)?;
@@ -104,6 +123,14 @@ fn receive(input: impl Read, latest: &Latest, wake: &EventLoopProxy<Wake>, contr
         }
     }
     Ok(())
+}
+
+/// Asks the phone for a new bit rate, when there is one.
+fn set_rate(control: &Sender<Vec<u8>>, stats: &Stats, bit_rate: Option<u32>, why: &str) {
+    if let Some(bit_rate) = bit_rate {
+        stats.note(&format!("bit rate {} kbit/s, {why}", bit_rate / 1000));
+        let _ = control.send(control::set_video_bit_rate(bit_rate));
+    }
 }
 
 /// Writes on a thread of its own, so that a slow link never stalls the window.
@@ -293,10 +320,11 @@ pub fn run(options: Options) -> Result<()> {
     let latest = Latest::default();
 
     let incoming = latest.clone();
+    let bit_rate = options.bit_rate;
     let control = start_control();
     let asking = control.clone();
     thread::spawn(move || {
-        if let Err(err) = receive(io::stdin().lock(), &incoming, &wake, &asking) {
+        if let Err(err) = receive(io::stdin().lock(), &incoming, &wake, &asking, bit_rate) {
             eprintln!("video stream: {err:#}");
         }
         let _ = wake.send_event(Wake::Ended);
@@ -346,9 +374,10 @@ mod tests {
 
     #[test]
     fn options_survive_the_trip_between_processes() {
-        let options = Options { title: "Maps".into(), app_id: "orither-maps".into(), icon: None, flex: true };
+        let options = Options { title: "Maps".into(), app_id: "orither-maps".into(), icon: None, flex: true, bit_rate: 6_000_000 };
         let back = Options::from_args(options.to_args().into_iter()).unwrap();
         assert_eq!((back.title.as_str(), back.app_id.as_str()), ("Maps", "orither-maps"));
         assert!(back.icon.is_none() && back.flex);
+        assert_eq!(back.bit_rate, 6_000_000);
     }
 }

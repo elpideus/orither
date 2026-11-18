@@ -279,10 +279,36 @@ In the lab (emulator, Settings scrolled hard, a link limited to the rate given):
 | 6 Mbit/s | 36 fps, 7 s behind and growing | 32 fps, at most 0.25 s behind |
 | 1.5 Mbit/s | 7 fps, 26 s behind | 7 fps, at most 0.3 s behind |
 
-When the link stays far slower than the encoder, the picture comes in bursts after
-key frames, but it stays live. scrcpy cannot change its bit rate while it runs, and
-restarting the capture would close an Integrated Mode app's display, so the bit
-rate is only chosen by route when a capture starts.
+### Fitting the bit rate to the link
+
+Pacing keeps the picture live, but a link that stays slower than the encoder still
+gets bursts of pictures after key frames. Upstream scrcpy cannot change its bit rate
+while it runs, and restarting a capture would close an Integrated Mode app's
+display. So the Android app carries scrcpy's server with a small change
+(`android/scrcpy/bit-rate.patch`, built by `android/scrcpy/build.sh` from the pinned
+release): control message 100, followed by a big-endian u32, sets the running
+encoder's bit rate (`MediaCodec.PARAMETER_KEY_VIDEO_BITRATE`), and an encoder started
+again after a reset or resize keeps it. The server keeps scrcpy's version name,
+since an engine that is still running from the app before an update checks it.
+
+A phone app that has it answers `screen.abilities` with `{"bitRate": true}`. The
+computer then hands the window the route's bit rate as the top, and the window
+(`orither_viewer`'s `rate`) cuts it to 60% each time the phone drops pictures
+(before asking for the key frame, so the key frame comes at the new rate), and to
+80% when pictures keep coming over 300 ms late for a second, at most once a second,
+down to 500 kbit/s. After 5 seconds on time, and 10 after a drop, it raises the bit
+rate a fifth at a time, back up to the top.
+
+In the lab, scrolling hard over a link with an uneven 100 ms round trip:
+
+| Link | Paced only | With the bit rate fitted |
+| --- | --- | --- |
+| 3 Mbit/s | 7–16 fps, 3–4 key frames in 2 s | 56–64 fps after about 6 s, a key frame now and then |
+| 1.5 Mbit/s | 1–4 fps | 17–24 fps |
+| unlimited | 59 fps | 60 fps, the bit rate never cut |
+
+The emulator's software encoder overshoots low bit rates, which keeps the 1.5 Mbit/s
+case from smoothing out further; a phone's hardware encoder keeps to them better.
 
 Integrated Mode starts the app on a virtual display of its own (`new_display`,
 `flex_display`), so a resized window resizes the phone's display and the app reflows.
