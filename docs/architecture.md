@@ -156,7 +156,13 @@ names with its own contacts permission.
 **adb comes with Orither** (`adb.rs`): the installers carry Android's platform-tools
 adb (`scripts/fetch-adb.mjs`, `adb.<os>.conf.json`). An adb the person installed
 comes first, since two adb versions stop each other's server. On Windows it runs
-without a console window.
+without a console window. Orither's own adb runs with `ADB_MDNS=0`: it finds phones
+by cable, and its search of the local network listened on every network, so Windows
+asked to let "adb, publisher unknown" through the firewall. adb leaves its server
+running after Orither closes, holding `adb.exe` and its DLLs open, so the Windows
+installer stops the adb in Orither's folder before it copies or removes files
+(`src-tauri/windows/hooks.nsh`); before, an update stopped at "Error opening file for
+writing: …\adb\AdbWinApi.dll".
 
 ### Setting a phone up over USB
 

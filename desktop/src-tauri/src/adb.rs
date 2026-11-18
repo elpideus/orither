@@ -57,7 +57,16 @@ fn on_path(name: &Path) -> Option<PathBuf> {
 
 /// A command running adb, which on Windows opens no console window of its own.
 pub fn command() -> Command {
-    let mut command = Command::new(tool());
+    let tool = tool();
+    let own = BUNDLED.get().and_then(Option::as_ref).is_some_and(|bundled| *bundled == tool);
+    let mut command = Command::new(&tool);
+    // Orither's own adb finds phones by cable. Its search of the local network listens on
+    // every network, so Windows asked to let "adb, publisher unknown" through the firewall,
+    // a program the person never installed. The server takes this from the command that
+    // starts it. Someone's own adb is theirs to set up.
+    if own {
+        command.env("ADB_MDNS", "0");
+    }
     #[cfg(windows)]
     {
         /// CREATE_NO_WINDOW: adb is a console program, and Orither is not.
