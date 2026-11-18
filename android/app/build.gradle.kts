@@ -23,7 +23,7 @@ android {
         applicationId = "dev.orither"
         minSdk = 29
         targetSdk = 36
-        versionName = "0.3.0"
+        versionName = "0.3.1"
         versionCode = versionCodeOf(versionName!!)
         ndk { abiFilters += "arm64-v8a" }
     }
