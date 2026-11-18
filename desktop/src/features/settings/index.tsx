@@ -9,6 +9,7 @@ import { ease, timing } from "../../core/motion";
 import { Button, PhoneMark, Toggle, when } from "../../ui/kit";
 import { routeWords } from "../../ui/Orrery";
 import { Pair } from "../../ui/Pair";
+import { UsbSetup } from "../setup";
 import { UpdatesPane, useUpdates } from "../updates";
 import "./settings.css";
 
@@ -118,6 +119,7 @@ function Page() {
             ))}
           </AnimatePresence>
         </ul>
+        {phones.length > 0 && !linking && <UsbSetup linked />}
       </section>
       <section className="pane settings-group">
         <div className="pane-head">

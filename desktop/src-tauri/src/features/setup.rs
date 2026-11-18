@@ -74,7 +74,7 @@ impl Setup {
         let result = self.set_up(&serial, invite).await;
         self.running.lock().unwrap().remove(&serial);
         match result {
-            Ok(missing) => self.tell("done", &serial, json!({ "missing": missing })),
+            Ok(done) => self.tell("done", &serial, json!({ "missing": done.missing, "advice": done.advice })),
             Err(err) => {
                 tracing::warn!("setting up {serial}: {err:#}");
                 self.tell("failed", &serial, json!({ "error": format!("{err:#}") }));
@@ -83,7 +83,7 @@ impl Setup {
     }
 
     /// `invite` is the pairing link the screen shows, which setup uses rather than replace it.
-    async fn set_up(&self, serial: &str, invite: Option<String>) -> Result<Vec<String>> {
+    async fn set_up(&self, serial: &str, invite: Option<String>) -> Result<Done> {
         let device = devices().await?.into_iter().find(|device| device.serial == serial).context("The phone is no longer connected.")?;
         if device.state == "unauthorized" {
             bail!("Allow USB debugging on your phone, with Always allow from this computer ticked.");
@@ -92,11 +92,12 @@ impl Setup {
             bail!("The phone is connected but not ready. Unplug it and plug it in again.");
         }
 
+        let mut held_back = false;
         if outdated(device.app.as_deref(), &self.version()) {
             self.tell("progress", serial, json!({ "step": "download" }));
             let apk = self.apk().await?;
             self.tell("progress", serial, json!({ "step": "install" }));
-            self.install(serial, &apk).await?;
+            held_back = !self.install(serial, &apk).await?;
         }
 
         self.tell("progress", serial, json!({ "step": "link" }));
@@ -107,12 +108,17 @@ impl Setup {
 
         self.tell("progress", serial, json!({ "step": "allow" }));
         let allowed = session.call("helper", "allow", json!({})).await?;
-        Ok(allowed["missing"].as_array().map(|missing| missing.iter().filter_map(|name| name.as_str().map(str::to_owned)).collect()).unwrap_or_default())
+        let missing: Vec<String> =
+            allowed["missing"].as_array().map(|missing| missing.iter().filter_map(|name| name.as_str().map(str::to_owned)).collect()).unwrap_or_default();
+        if !held_back && !missing.is_empty() {
+            held_back = is_xiaomi(&adb::run(&["-s", serial, "shell", "getprop ro.product.manufacturer; getprop ro.product.brand"]).await?.stdout);
+        }
+        Ok(Done { missing, advice: held_back.then(|| XIAOMI_SECURITY.to_owned()) })
     }
 
     /// The Android app of this computer's version, downloaded once and checked against the release's checksums.
     async fn apk(&self) -> Result<PathBuf> {
-        if let Some(path) = std::env::var_os(APK_OVERRIDE) {
+        if let Some(path) = std::env::var_os(APK_OVERRIDE).filter(|path| !path.is_empty()) {
             return Ok(path.into());
         }
         let version = self.version();
@@ -142,10 +148,31 @@ impl Setup {
         Ok(path)
     }
 
-    /// Installs (or updates) the app with every permission it asks for already granted.
-    async fn install(&self, serial: &str, apk: &Path) -> Result<()> {
+    /// Installs (or updates) the app with every permission it asks for already granted,
+    /// or without them where the phone does not let a computer grant them. Says which.
+    async fn install(&self, serial: &str, apk: &Path) -> Result<bool> {
+        let said = self.try_install(serial, apk, true).await?;
+        if said.contains("Success") {
+            return Ok(true);
+        }
+        if grants_refused(&said) {
+            let said = self.try_install(serial, apk, false).await?;
+            if said.contains("Success") {
+                return Ok(false);
+            }
+            bail!(install_failure(&said))
+        }
+        bail!(install_failure(&said))
+    }
+
+    /// What adb said about installing the app, granting its permissions or not.
+    async fn try_install(&self, serial: &str, apk: &Path, grant: bool) -> Result<String> {
         let apk = apk.to_string_lossy().into_owned();
-        let args = ["-s", serial, "install", "-r", "-g", &apk];
+        let mut args = vec!["-s", serial, "install", "-r"];
+        if grant {
+            args.push("-g");
+        }
+        args.push(&apk);
         let mut install = Box::pin(adb::run(&args));
         let output = match timeout(CONFIRM_AFTER, &mut install).await {
             Ok(output) => output?,
@@ -155,11 +182,7 @@ impl Setup {
                 timeout(INSTALL_WITHIN, install).await.context("The phone did not finish installing Orither.")??
             }
         };
-        let said = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-        if said.contains("Success") {
-            return Ok(());
-        }
-        bail!(install_failure(&said))
+        Ok(format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)))
     }
 
     /// Links the phone to this computer through a pairing link opened on it, unless it is linked already.
@@ -265,8 +288,50 @@ fn outdated(installed: Option<&str>, ours: &str) -> bool {
     }
 }
 
+/// How a setup ended: what Android kept off, and what the person can do about it.
+struct Done {
+    missing: Vec<String>,
+    advice: Option<String>,
+}
+
+/// Xiaomi, Redmi and POCO phones let a computer grant permissions, and touch the
+/// screen, only with this on.
+const XIAOMI_SECURITY: &str = "This phone lets a computer turn things on, and use the screen, only with \
+USB debugging (Security settings) on. Turn it on in Settings › Additional settings › Developer options \
+(it needs a SIM card and a Xiaomi account), then choose Set up again under Turn everything on over USB in \
+Orither's settings.";
+
+/// Whether the phone refused to let adb grant the app's permissions, as Xiaomi's do
+/// without USB debugging (Security settings).
+fn grants_refused(said: &str) -> bool {
+    said.contains("INSTALL_GRANT_RUNTIME_PERMISSIONS") || said.contains("INSTALL_GRANT_ALL_REQUESTED_PERMISSIONS")
+}
+
+/// Whether `getprop` names Xiaomi as the maker or brand, which covers Redmi and POCO too.
+fn is_xiaomi(said: &[u8]) -> bool {
+    let said = String::from_utf8_lossy(said).to_lowercase();
+    ["xiaomi", "redmi", "poco"].iter().any(|name| said.lines().any(|line| line.trim() == *name))
+}
+
+/// The line of adb's answer that says what went wrong, without Java's stack.
+fn gist(said: &str) -> String {
+    let line = said
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && *line != "Performing Streamed Install" && !line.starts_with("at "))
+        .unwrap_or("");
+    let mut gist: String = line.chars().take(300).collect();
+    if gist.len() < line.len() {
+        gist.push('…');
+    }
+    gist
+}
+
 /// Words a person can act on, for adb's install failures.
 fn install_failure(said: &str) -> String {
+    if grants_refused(said) {
+        return XIAOMI_SECURITY.to_owned();
+    }
     let code = said.split(|c: char| !(c.is_ascii_uppercase() || c == '_')).find(|word| word.starts_with("INSTALL_")).unwrap_or("");
     match code {
         "INSTALL_FAILED_UPDATE_INCOMPATIBLE" => "Orither on your phone came from another build. Uninstall it from the phone, then try again.".into(),
@@ -275,7 +340,7 @@ fn install_failure(said: &str) -> String {
         "INSTALL_FAILED_NO_MATCHING_ABIS" => "Orither needs a phone with a 64-bit ARM processor.".into(),
         "INSTALL_FAILED_OLDER_SDK" => "Orither needs Android 10 or newer.".into(),
         "INSTALL_FAILED_INSUFFICIENT_STORAGE" => "Your phone is out of storage. Free some space, then try again.".into(),
-        _ => format!("Installing Orither on your phone failed: {}", said.trim()),
+        _ => format!("Installing Orither on your phone failed: {}", gist(said)),
     }
 }
 
@@ -309,5 +374,32 @@ mod tests {
         assert!(install_failure(said).starts_with("Play Protect stopped"));
         assert!(install_failure("Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package signatures do not match]").contains("another build"));
         assert!(install_failure("something odd").contains("something odd"));
+    }
+
+    /// What a Xiaomi phone without USB debugging (Security settings) says to `install -g`.
+    const XIAOMI_REFUSAL: &str = "Performing Streamed Install\nadb.exe: failed to install C:\\Users\\x\\Orither-0.3.0.apk: \
+Exception occurred while executing 'install': java.lang.SecurityException: You need the \
+android.permission.INSTALL_GRANT_RUNTIME_PERMISSIONS permission to use the \
+PackageManager.INSTALL_GRANT_ALL_REQUESTED_PERMISSIONS flag\n\tat com.android.server.pm.PackageInstallerService.createSessionInternal(PackageInstallerService.java:973)\n\tat com.android.server.pm.PackageInstallerService.createSession(PackageInstallerService.java:715)";
+
+    #[test]
+    fn a_phone_that_refuses_grants_is_told_apart() {
+        assert!(grants_refused(XIAOMI_REFUSAL));
+        assert!(!grants_refused("Failure [INSTALL_FAILED_USER_RESTRICTED: Install canceled by user]"));
+        assert!(install_failure(XIAOMI_REFUSAL).contains("USB debugging (Security settings)"));
+    }
+
+    #[test]
+    fn xiaomi_phones_are_known_by_maker_or_brand() {
+        assert!(is_xiaomi(b"Xiaomi\nPOCO\n"));
+        assert!(is_xiaomi(b"Xiaomi\r\nRedmi\r\n"));
+        assert!(!is_xiaomi(b"Google\ngoogle\n"));
+        assert!(!is_xiaomi(b"samsung\nsamsung\n"));
+    }
+
+    #[test]
+    fn a_failure_is_shown_without_the_java_stack() {
+        let said = "Performing Streamed Install\nadb: failed to install x.apk: Exception: something broke\n\tat a.b(C.java:1)\n\tat d.e(F.java:2)";
+        assert_eq!(gist(said), "adb: failed to install x.apk: Exception: something broke");
     }
 }

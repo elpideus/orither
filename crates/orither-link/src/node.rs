@@ -267,7 +267,7 @@ impl Node {
 
     /// Redeems a code or QR payload from another device.
     pub async fn join(&self, token: &str) -> Result<Peer> {
-        let id = pairing::join(token, self.id(), &self.inner.device, self.saver()).await?;
+        let id = pairing::join(&self.inner.endpoint, token, &self.inner.device, self.saver()).await?;
         self.welcome(id)
     }
 

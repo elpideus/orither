@@ -29,7 +29,15 @@ const STEP_WORDS: Record<Step, string> = {
   allow: "Turning everything on…",
 };
 
-type Progress = { step: Step } | { done: string[] } | { error: string };
+type Progress = { step: Step } | { done: string[]; advice?: string } | { error: string };
+
+type Done = { serial: string; missing: string[]; advice?: string | null };
+
+/** What a finished setup says: what Android kept off, and how to turn it on. */
+function doneWords({ missing, advice }: { missing: string[]; advice?: string | null }): string {
+  if (advice) return missing.length ? `${advice} Still off: ${missing.join(", ")}.` : advice;
+  return missing.length ? `Android kept these off: ${missing.join(", ")}. Allow them in Orither on the phone.` : "";
+}
 
 let progress: Record<string, Progress> = {};
 const listeners = new Set<() => void>();
@@ -53,7 +61,7 @@ function useProgress(): Record<string, Progress> {
 /** Keeps the progress the computer reports, wherever setup is shown. */
 function useRecording() {
   useNotice<{ serial: string; step: Step }>(ID, "progress", ({ serial, step }) => record(serial, { step }));
-  useNotice<{ serial: string; missing: string[] }>(ID, "done", ({ serial, missing }) => record(serial, { done: missing }));
+  useNotice<Done>(ID, "done", ({ serial, missing, advice }) => record(serial, { done: missing, advice: advice ?? undefined }));
   useNotice<{ serial: string; error: string }>(ID, "failed", ({ serial, error }) => record(serial, { error }));
 }
 
@@ -99,7 +107,8 @@ function DeviceRow({ device, invite }: { device: Device; invite?: string }) {
   } else if ("step" in state) {
     words = STEP_WORDS[state.step];
   } else if ("done" in state) {
-    words = state.done.length ? `Set up. Android kept these off: ${state.done.join(", ")}. Allow them in Orither on the phone.` : "Set up, with everything on.";
+    const left = doneWords({ missing: state.done, advice: state.advice });
+    words = left ? `Set up. ${left}` : "Set up, with everything on.";
   } else {
     words = state.error;
     action = <Button onClick={start}>Try again</Button>;
@@ -117,18 +126,22 @@ function DeviceRow({ device, invite }: { device: Device; invite?: string }) {
   );
 }
 
-/** Setting up a phone over a USB cable: Orither installs its app, links it and turns everything on. */
-export function UsbSetup({ invite }: { invite?: string }) {
+/**
+ * Setting up a phone over a USB cable: Orither installs or updates its app, links it unless
+ * it is linked already, and turns everything on. `linked` words it for phones that are, such
+ * as one linked with a code, which needs the cable once for its screen, apps and the rest.
+ */
+export function UsbSetup({ invite, linked = false }: { invite?: string; linked?: boolean }) {
   useRecording();
   const found = useDevices();
   if (!found || !found.adb) return null;
   const { devices } = found;
   return (
-    <div className="usb-setup">
+    <div className="usb-setup" data-linked={linked || undefined}>
       <div className="usb-head">
         <Usb size={18} />
-        <strong>Set up over USB</strong>
-        <span className="usb-easiest">Easiest</span>
+        <strong>{linked ? "Turn everything on over USB" : "Set up over USB"}</strong>
+        {!linked && <span className="usb-easiest">Easiest</span>}
       </div>
       {devices.length === 0 ? (
         <ol className="usb-steps">
@@ -145,7 +158,11 @@ export function UsbSetup({ invite }: { invite?: string }) {
           ))}
         </ul>
       )}
-      <p className="dim usb-note">Orither installs its app on the phone, links it and turns everything on. Nothing to download on the phone.</p>
+      <p className="dim usb-note">
+        {linked
+          ? "A phone linked with a code needs this once for its screen, apps, messages and the rest. Orither also brings its app on the phone up to date."
+          : "Orither installs its app on the phone, links it and turns everything on. Nothing to download on the phone."}
+      </p>
     </div>
   );
 }
@@ -156,13 +173,14 @@ function Ambient() {
   useNotice<{ serial: string; step: Step }>(ID, "progress", ({ serial, step }) => {
     if (step === "helper" || step === "allow") announce({ id: `${ID}-${serial}`, icon: Usb, title: "Setting up your phone", detail: STEP_WORDS[step] });
   });
-  useNotice<{ serial: string; missing: string[] }>(ID, "done", ({ serial, missing }) => {
+  useNotice<Done>(ID, "done", ({ serial, missing, advice }) => {
     announce({
       id: `${ID}-${serial}`,
       icon: CircleCheck,
       title: "Your phone is set up",
-      detail: missing.length ? `Android kept these off: ${missing.join(", ")}. Allow them in Orither on the phone.` : "Everything is on.",
-      lasts: DONE_LASTS,
+      detail: doneWords({ missing, advice }) || "Everything is on.",
+      // Advice takes reading and doing, so it stays until dismissed.
+      lasts: advice ? undefined : DONE_LASTS,
     });
   });
   useNotice<{ serial: string; error: string }>(ID, "failed", ({ serial, error }) => {

@@ -33,7 +33,7 @@
     <string name="allow_with_usb">Needs USB</string>
     <string name="engine_title">Screen and control</string>
     <string name="engine_ready">Ready. Screen, apps, messages, clipboard and more work from your computer.</string>
-    <string name="engine_needed">Connect this phone to your computer with a USB cable once to unlock these.</string>
+    <string name="engine_needed">Connect this phone to your computer with a USB cable once, then choose Set up in Orither\'s settings on the computer, to unlock these.</string>
     <string name="engine_waiting">Your computer starts this again over Wi-Fi when it next connects.</string>
     <string name="handoff_tile">Send to computer</string>
     <string name="handoff_offline">Your computer isn\'t connected</string>

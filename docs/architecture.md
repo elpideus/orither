@@ -114,6 +114,13 @@ The host saves the peer before it replies, and the joiner saves before it hangs 
 so neither side can end up paired alone. An invite lasts 5 minutes, and allows 5
 attempts.
 
+The joiner dials from its own endpoint, which is up already. Up to 0.3.0 it bound a
+throwaway endpoint for that too, and on a phone a second `bind` sometimes never
+returned: a pairing link that started the app, as USB setup's does, then failed
+after 45 seconds two times in three on the test emulator. Each dial gets 10 seconds
+before the joiner tries again, since the host publishes its address moments after
+showing the code.
+
 ## The engine
 
 An Android app cannot capture the screen silently, inject input, or watch the
@@ -154,12 +161,17 @@ without a console window.
 ### Setting a phone up over USB
 
 `features/setup.rs` does the whole setup with one cable. The pairing screen lists
-what `adb devices` sees (`setup/devices`); **Set up** (`setup/start`) then:
+what `adb devices` sees (`setup/devices`), and so does Settings, under **Turn
+everything on over USB**, for a phone linked with a code that never had the cable;
+**Set up** (`setup/start`) then:
 
 1. installs the Android app of the computer's version with `adb install -r -g`
    (downloaded from the release and checked against its `SHA256SUMS`), unless the
    phone has it. Play Protect checks USB installs too, so the step waits for the
-   person to confirm on the phone, and explains adb's failure codes;
+   person to confirm on the phone, and explains adb's failure codes. Xiaomi, Redmi
+   and POCO phones refuse `-g` without **USB debugging (Security settings)**, which
+   also keeps the computer from touching their screen, so the app is installed
+   without it and the result says how to turn that setting on;
 2. links the phone by opening the pairing link the screen shows on it
    (`am start -d orither://pair/…`), unless it is linked already;
 3. starts the engine (`helper::ensure_engine`);

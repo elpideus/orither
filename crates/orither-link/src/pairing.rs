@@ -37,6 +37,9 @@ const URI_PREFIX: &str = "orither://pair/";
 
 const INVITE_LIFETIME: Duration = Duration::from_secs(300);
 const JOIN_LIFETIME: Duration = Duration::from_secs(45);
+/// How long one dial may take before the joiner looks the host up again.
+const ATTEMPT_WITHIN: Duration = Duration::from_secs(10);
+
 const MAX_ATTEMPTS: usize = 5;
 
 /// One pairing invitation, shown as both a short code and a QR code.
@@ -195,28 +198,34 @@ async fn serve_invite(
     bail!("too many wrong attempts")
 }
 
-/// Redeems an invite. Dials repeatedly because a host publishes its address
-/// moments after showing the code.
-pub(crate) async fn join(token: &str, me: PeerId, device: &Device, save: Save) -> Result<PeerId> {
+/// Redeems an invite from this device's own endpoint, which is up already: a second
+/// endpoint sometimes never finished binding on a phone, and the join waited on it
+/// until it gave up. Dials repeatedly because a host publishes its address moments
+/// after showing the code, and gives each dial a limit so that one which found
+/// nothing does not use up the whole join.
+pub(crate) async fn join(endpoint: &Endpoint, token: &str, device: &Device, save: Save) -> Result<PeerId> {
     let token = normalize(token);
     ensure!(token.len() == CODE_LEN || token.len() == QR_LEN, "that doesn't look like a pairing code");
     let keys = derive(&token)?;
     let host: EndpointId = keys.endpoint.public();
-    let endpoint = throwaway_endpoint(SecretKey::generate(), Vec::new()).await?;
+    let me = endpoint.id();
     let attempt = timeout(JOIN_LIFETIME, async {
         loop {
-            match redeem(&endpoint, host, &keys.mac, me, device, &save).await {
-                Ok(peer) => return Ok(peer),
-                Err(err) if err.to_string().contains("wrong") => return Err(err),
-                Err(err) => {
-                    tracing::debug!("pairing attempt failed: {err:#}");
+            match timeout(ATTEMPT_WITHIN, redeem(endpoint, host, &keys.mac, me, device, &save)).await {
+                Ok(Ok(peer)) => return Ok(peer),
+                Ok(Err(err)) if err.to_string().contains("wrong") => {
+                    tracing::info!("pairing refused: {err:#}");
+                    return Err(err);
+                }
+                Ok(Err(err)) => {
+                    tracing::info!("pairing attempt failed: {err:#}");
                     sleep(Duration::from_secs(2)).await;
                 }
+                Err(_) => tracing::info!("pairing attempt found nothing within {}s", ATTEMPT_WITHIN.as_secs()),
             }
         }
     })
     .await;
-    endpoint.close().await;
     attempt.map_err(|_| anyhow!("couldn't find that device. Check the code and try again"))?
 }
 
